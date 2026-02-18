@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Commy Examples GUI</title>
+        <link rel="stylesheet" href="styles.css">
+    </head>
+
+    <body>
+        <div id="app">
+            <!-- Header -->
+            <header class="header">
+                <div class="container">
+                    <h1>🚀 Commy Examples Runner</h1>
+                    <p class="subtitle">Learn Commy through interactive examples</p>
+                </div>
+            </header>
+
+            <!-- Main Content -->
+            <main class="container">
+                <!-- Examples List View -->
+                <div id="mainView" class="main-view">
+                    <div class="status-bar">
+                        <div class="status-item">
+                            <span class="status-label">Commy Server:</span>
+                            <span id="serverStatus" class="status-running">● Running</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Running Examples:</span>
+                            <span id="runningCount">0</span>
+                        </div>
+                    </div>
+
+                    <div id="examplesList" class="examples-grid">
+                        <!-- Examples loaded by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Example Details View -->
+                <div id="detailsView" class="details-view" style="display: none;">
+                    <button class="btn-back" onclick="showMainView()">← Back to Examples</button>
+
+                    <div class="example-detail">
+                        <h2 id="detailName"></h2>
+                        <p id="detailDescription" class="description"></p>
+
+                        <div class="meta-info">
+                            <div class="meta-item">
+                                <span class="meta-label">Difficulty:</span>
+                                <span id="detailDifficulty"></span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Time:</span>
+                                <span id="detailTime"></span>
+                            </div>
+                        </div>
+
+                        <div class="action-buttons">
+                            <button class="btn-primary" onclick="runCurrentExample()">
+                                ▶ Run Example
+                            </button>
+                            <button class="btn-secondary" onclick="showMainView()">
+                                Cancel
+                            </button>
+                        </div>
+
+                        <div id="runMessage" class="run-message" style="display: none;"></div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Footer -->
+            <footer class="footer">
+                <p>Commy Examples Runner • Open in new window for example output</p>
+            </footer>
+        </div>
+
+        <script src="app.js"></script>
+    </body>
+
+</html>

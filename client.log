@@ -1,0 +1,51 @@
+
+ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù
+Γòæ    Commy Basic Client Example          Γòæ
+Γòæ    (Auto-managed Commy Server)         Γòæ
+ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥
+
+≡ƒôª Using GUI-managed server
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  ΓööΓöÇ Connected to: wss://127.0.0.1:8443
+
+≡ƒöî Connecting client
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  Γö£ΓöÇ Client ID: 069a4ab7-9301-4473-8b08-2f082092e6d6
+  Γö£ΓöÇ Connecting to server... Γ£à
+  Γö£ΓöÇ Tenant: my_tenant
+  Γö£ΓöÇ Authenticating with API key... Γ£à
+  Γöé  ΓööΓöÇ Permissions: ["all"]
+  ΓööΓöÇ Connected!
+
+≡ƒôï Performing service operations
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  Γö£ΓöÇ Service name: config
+[Client] Failed to deserialize ServerMessage: unknown variant `InvalidRequest`, expected one of `NOT_FOUND`, `PERMISSION_DENIED`, `UNAUTHORIZED`, `ALREADY_EXISTS`, `INVALID_REQUEST`, `INTERNAL_ERROR`, `CONNECTION_LOST`, `TIMEOUT` at line 1 column 97
+[Client] Raw message: {"data":{"code":"InvalidRequest","message":"Operation not implemented on server"},"type":"Error"}
+[Client] Failed to deserialize ServerMessage: unknown variant `PermissionDenied`, expected one of `NOT_FOUND`, `PERMISSION_DENIED`, `UNAUTHORIZED`, `ALREADY_EXISTS`, `INVALID_REQUEST`, `INTERNAL_ERROR`, `CONNECTION_LOST`, `TIMEOUT` at line 1 column 106
+[Client] Raw message: {"data":{"code":"PermissionDenied","message":"Permission denied: create_service required"},"type":"Error"}
+  Γö£ΓöÇ Creating service... ΓÜá∩╕Å  (Operation timeout)
+[Client] Failed to deserialize ServerMessage: unknown variant `PermissionDenied`, expected one of `NOT_FOUND`, `PERMISSION_DENIED`, `UNAUTHORIZED`, `ALREADY_EXISTS`, `INVALID_REQUEST`, `INTERNAL_ERROR`, `CONNECTION_LOST`, `TIMEOUT` at line 1 column 104
+[Client] Raw message: {"data":{"code":"PermissionDenied","message":"Permission denied: read_service required"},"type":"Error"}
+  Γö£ΓöÇ Reading service info... ΓÜá∩╕Å  (Operation timeout)
+  Γö£ΓöÇ Sending heartbeat... Γ£à
+[Client] Failed to deserialize ServerMessage: unknown variant `InvalidRequest`, expected one of `NOT_FOUND`, `PERMISSION_DENIED`, `UNAUTHORIZED`, `ALREADY_EXISTS`, `INVALID_REQUEST`, `INTERNAL_ERROR`, `CONNECTION_LOST`, `TIMEOUT` at line 1 column 97
+[Client] Raw message: {"data":{"code":"InvalidRequest","message":"Operation not implemented on server"},"type":"Error"}
+[Client] Failed to deserialize ServerMessage: unknown variant `PermissionDenied`, expected one of `NOT_FOUND`, `PERMISSION_DENIED`, `UNAUTHORIZED`, `ALREADY_EXISTS`, `INVALID_REQUEST`, `INTERNAL_ERROR`, `CONNECTION_LOST`, `TIMEOUT` at line 1 column 106
+[Client] Raw message: {"data":{"code":"PermissionDenied","message":"Permission denied: delete_service required"},"type":"Error"}
+[Client] Failed to deserialize ServerMessage: unknown variant `InvalidRequest`, expected one of `NOT_FOUND`, `PERMISSION_DENIED`, `UNAUTHORIZED`, `ALREADY_EXISTS`, `INVALID_REQUEST`, `INTERNAL_ERROR`, `CONNECTION_LOST`, `TIMEOUT` at line 1 column 97
+[Client] Raw message: {"data":{"code":"InvalidRequest","message":"Operation not implemented on server"},"type":"Error"}
+  Γö£ΓöÇ Deleting service... ΓÜá∩╕Å  (Operation timeout)
+  ΓööΓöÇ Done!
+
+≡ƒöî Disconnecting
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  Γö£ΓöÇ Disconnecting from server... Γ£à
+  Γö£ΓöÇ Stopping server... 
+  ΓööΓöÇ (will happen automatically on exit)
+
+ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù
+Γòæ  Γ£à Example completed successfully!    Γòæ
+Γòæ  Server will be stopped automatically  Γòæ
+ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥
+

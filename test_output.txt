@@ -1,0 +1,500 @@
+   Compiling commy-client v0.1.0 (C:\Users\cires\OneDrive\Documents\projects\commy\ClientSDKs\rust-sdk)
+error[E0432]: unresolved import `notify::watcher`
+ --> src\watcher.rs:8:38
+  |
+8 | use notify::{Watcher, RecursiveMode, watcher};
+  |                                      ^^^^^^^
+  |                                      |
+  |                                      no `watcher` in the root
+  |                                      help: a similar name exists in the module (notice the capitalization): `Watcher`
+  |
+  = help: consider importing this module instead:
+          crate::watcher
+
+error[E0432]: unresolved import `notify::DebouncedEvent`
+   --> src\watcher.rs:123:13
+    |
+123 |         use notify::DebouncedEvent;
+    |             ^^^^^^^^^^^^^^^^^^^^^^ no `DebouncedEvent` in the root
+
+error[E0603]: enum import `AuthCredentials` is private
+   --> src\client.rs:3:32
+    |
+  3 | use crate::auth::{AuthContext, AuthCredentials};
+    |                                ^^^^^^^^^^^^^^^ private enum import
+    |
+note: the enum import `AuthCredentials` is defined here...
+   --> src\auth.rs:4:5
+    |
+  4 | use crate::message::AuthCredentials;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...and refers to the enum `AuthCredentials` which is defined here
+   --> src\message.rs:150:1
+    |
+150 | pub enum AuthCredentials {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ you could import this directly
+help: import `AuthCredentials` directly
+    |
+  3 | use crate::auth::{AuthContext, message::AuthCredentials};
+    |                                +++++++++
+
+warning: unused import: `FileAccessor`
+ --> src\client.rs:6:28
+  |
+6 | use crate::file_accessor::{FileAccessor, RemoteFileAccessor};
+  |                            ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Permission`
+ --> src\client.rs:7:37
+  |
+7 | use crate::message::{ClientMessage, Permission, ServerMessage};
+  |                                     ^^^^^^^^^^
+
+warning: unused import: `ClientState`
+ --> src\client.rs:9:20
+  |
+9 | use crate::state::{ClientState, SharedState, create_shared_state};
+  |                    ^^^^^^^^^^^
+
+warning: unused import: `create_temp_service_file`
+  --> src\client.rs:11:43
+   |
+11 | use crate::watcher::{VariableFileWatcher, create_temp_service_file};
+   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> src\message.rs:4:5
+  |
+4 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `crate::client::Client`
+ --> src\service.rs:3:5
+  |
+3 | use crate::client::Client;
+  |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ClientMessage`
+ --> src\service.rs:4:22
+  |
+4 | use crate::message::{ClientMessage, VariableMetadata};
+  |                      ^^^^^^^^^^^^^
+
+warning: unused imports: `CommyError` and `Result`
+ --> src\service.rs:5:13
+  |
+5 | use crate::{CommyError, Result};
+  |             ^^^^^^^^^^  ^^^^^^
+
+error[E0599]: no function or associated item named `connect` found for struct `Connection` in the current scope
+   --> src\client.rs:141:27
+    |
+141 |         match Connection::connect(&self.server_url).await {
+    |                           ^^^^^^^ function or associated item not found in `Connection`
+    |
+   ::: src\connection.rs:21:1
+    |
+ 21 | pub struct Connection {
+    | --------------------- function or associated item `connect` not found for this struct
+    |
+help: there is a method `is_connected` with a similar name, but with different arguments
+   --> src\connection.rs:89:5
+    |
+ 89 |     pub async fn is_connected(&self) -> bool {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> src\client.rs:185:23
+    |
+185 |               if let Ok(Some(ServerMessage::AuthenticationResult {
+    |  _______________________^
+186 | |                 success,
+187 | |                 permissions,
+188 | |                 ..
+189 | |             })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    | |              ^    ---------------------------------------------------------------- this expression has type `Result<Result<Option<ServerMessage>, CommyError>, Elapsed>`
+    | |______________|
+    |                expected `Result<Option<ServerMessage>, ...>`, found `Option<_>`
+    |
+    = note: expected enum `std::result::Result<std::option::Option<ServerMessage>, CommyError>`
+               found enum `std::option::Option<_>`
+    = note: the full name for the type has been written to 'C:\Users\cires\OneDrive\Documents\projects\commy\ClientSDKs\rust-sdk\target\debug\deps\commy_client-bd04f4cde7fd88f1.long-type-9826989557632680236.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0308]: mismatched types
+   --> src\client.rs:192:80
+    |
+192 |                     let auth_context = AuthContext::new(tenant_id.to_string(), permissions.clone());
+    |                                        ----------------                        ^^^^^^^^^^^^^^^^^^^ expected `Vec<String>`, found `Option<Vec<String>>`
+    |                                        |
+    |                                        arguments to this function are incorrect
+    |
+    = note: expected struct `Vec<_>`
+                 found enum `std::option::Option<Vec<_>>`
+note: associated function defined here
+   --> src\auth.rs:16:12
+    |
+ 16 |     pub fn new(tenant_id: String, permissions: Vec<String>) -> Self {
+    |            ^^^                    ------------------------
+help: consider using `Option::expect` to unwrap the `std::option::Option<Vec<std::string::String>>` value, panicking if the value is an `Option::None`
+    |
+192 |                     let auth_context = AuthContext::new(tenant_id.to_string(), permissions.clone().expect("REASON"));
+    |                                                                                                   +++++++++++++++++
+
+error[E0308]: mismatched types
+   --> src\client.rs:208:17
+    |
+208 |             Err(CommyError::ConnectionLost)
+    |             --- ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `CommyError`, found enum constructor
+    |             |
+    |             arguments to this enum variant are incorrect
+    |
+   ::: src\error.rs:17:5
+    |
+ 17 |     ConnectionLost(String),
+    |     -------------- `ConnectionLost` defines an enum variant constructor here, which should be called
+    |
+    = note:          expected enum `CommyError`
+            found enum constructor `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}`
+help: the type constructed contains `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}` due to the type of the argument passed
+   --> src\client.rs:208:13
+    |
+208 |             Err(CommyError::ConnectionLost)
+    |             ^^^^--------------------------^
+    |                 |
+    |                 this argument influences the type of `Err`
+note: tuple variant defined here
+   --> C:\Users\cires\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\result.rs:566:5
+    |
+566 |     Err(#[stable(feature = "rust1", since = "1.0.0")] E),
+    |     ^^^
+help: use parentheses to construct this tuple variant
+    |
+208 |             Err(CommyError::ConnectionLost(/* std::string::String */))
+    |                                           +++++++++++++++++++++++++++
+
+error[E0308]: mismatched types
+   --> src\client.rs:243:23
+    |
+243 |               if let Ok(Some(ServerMessage::Service {
+    |  _______________________^
+244 | |                 service_id,
+245 | |                 name,
+246 | |                 tenant_id: resp_tenant,
+247 | |             })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    | |              ^    ---------------------------------------------------------------- this expression has type `Result<Result<Option<ServerMessage>, CommyError>, Elapsed>`
+    | |______________|
+    |                expected `Result<Option<ServerMessage>, ...>`, found `Option<_>`
+    |
+    = note: expected enum `std::result::Result<std::option::Option<ServerMessage>, CommyError>`
+               found enum `std::option::Option<_>`
+    = note: the full name for the type has been written to 'C:\Users\cires\OneDrive\Documents\projects\commy\ClientSDKs\rust-sdk\target\debug\deps\commy_client-bd04f4cde7fd88f1.long-type-9826989557632680236.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0026]: variant `ServerMessage::Service` does not have a field named `name`
+   --> src\client.rs:245:17
+    |
+245 |                 name,
+    |                 ^^^^ variant `ServerMessage::Service` does not have this field
+
+error[E0027]: pattern does not mention fields `service_name`, `file_path`
+   --> src\client.rs:243:28
+    |
+243 |               if let Ok(Some(ServerMessage::Service {
+    |  ____________________________^
+244 | |                 service_id,
+245 | |                 name,
+246 | |                 tenant_id: resp_tenant,
+247 | |             })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    | |_____________^ missing fields `service_name`, `file_path`
+    |
+help: include the missing fields in the pattern
+    |
+246 -                 tenant_id: resp_tenant,
+247 -             })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+246 +                 tenant_id: resp_tenant, service_name, file_path })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    |
+help: if you don't care about these missing fields, you can explicitly ignore them
+    |
+246 -                 tenant_id: resp_tenant,
+247 -             })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+246 +                 tenant_id: resp_tenant, service_name: _, file_path: _ })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    |
+help: or always ignore missing fields here
+    |
+246 -                 tenant_id: resp_tenant,
+247 -             })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+246 +                 tenant_id: resp_tenant, .. })) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    |
+
+error[E0308]: mismatched types
+   --> src\client.rs:255:17
+    |
+255 |             Err(CommyError::ConnectionLost)
+    |             --- ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `CommyError`, found enum constructor
+    |             |
+    |             arguments to this enum variant are incorrect
+    |
+   ::: src\error.rs:17:5
+    |
+ 17 |     ConnectionLost(String),
+    |     -------------- `ConnectionLost` defines an enum variant constructor here, which should be called
+    |
+    = note:          expected enum `CommyError`
+            found enum constructor `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}`
+help: the type constructed contains `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}` due to the type of the argument passed
+   --> src\client.rs:255:13
+    |
+255 |             Err(CommyError::ConnectionLost)
+    |             ^^^^--------------------------^
+    |                 |
+    |                 this argument influences the type of `Err`
+note: tuple variant defined here
+   --> C:\Users\cires\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\result.rs:566:5
+    |
+566 |     Err(#[stable(feature = "rust1", since = "1.0.0")] E),
+    |     ^^^
+help: use parentheses to construct this tuple variant
+    |
+255 |             Err(CommyError::ConnectionLost(/* std::string::String */))
+    |                                           +++++++++++++++++++++++++++
+
+error[E0559]: variant `ClientMessage::ReadVariable` has no field named `tenant_id`
+   --> src\client.rs:267:13
+    |
+267 |             tenant_id: tenant_id.to_string(),
+    |             ^^^^^^^^^ `ClientMessage::ReadVariable` does not have this field
+    |
+    = note: available fields are: `service_id`
+
+error[E0559]: variant `ClientMessage::ReadVariable` has no field named `service_name`
+   --> src\client.rs:268:13
+    |
+268 |             service_name: service_name.to_string(),
+    |             ^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+268 -             service_name: service_name.to_string(),
+268 +             service_id: service_name.to_string(),
+    |
+
+error[E0308]: mismatched types
+   --> src\client.rs:275:23
+    |
+275 |             if let Ok(Some(ServerMessage::VariableData { data, .. })) =
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<Option<ServerMessage>, ...>`, found `Option<_>`
+276 |                 tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
+    |                 ---------------------------------------------------------------- this expression has type `Result<Result<Option<ServerMessage>, CommyError>, Elapsed>`
+    |
+    = note: expected enum `std::result::Result<std::option::Option<ServerMessage>, CommyError>`
+               found enum `std::option::Option<_>`
+    = note: the full name for the type has been written to 'C:\Users\cires\OneDrive\Documents\projects\commy\ClientSDKs\rust-sdk\target\debug\deps\commy_client-bd04f4cde7fd88f1.long-type-9826989557632680236.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0308]: mismatched types
+   --> src\client.rs:283:17
+    |
+283 |             Err(CommyError::ConnectionLost)
+    |             --- ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `CommyError`, found enum constructor
+    |             |
+    |             arguments to this enum variant are incorrect
+    |
+   ::: src\error.rs:17:5
+    |
+ 17 |     ConnectionLost(String),
+    |     -------------- `ConnectionLost` defines an enum variant constructor here, which should be called
+    |
+    = note:          expected enum `CommyError`
+            found enum constructor `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}`
+help: the type constructed contains `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}` due to the type of the argument passed
+   --> src\client.rs:283:13
+    |
+283 |             Err(CommyError::ConnectionLost)
+    |             ^^^^--------------------------^
+    |                 |
+    |                 this argument influences the type of `Err`
+note: tuple variant defined here
+   --> C:\Users\cires\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\result.rs:566:5
+    |
+566 |     Err(#[stable(feature = "rust1", since = "1.0.0")] E),
+    |     ^^^
+help: use parentheses to construct this tuple variant
+    |
+283 |             Err(CommyError::ConnectionLost(/* std::string::String */))
+    |                                           +++++++++++++++++++++++++++
+
+error[E0559]: variant `ClientMessage::WriteVariable` has no field named `tenant_id`
+   --> src\client.rs:296:13
+    |
+296 |             tenant_id: tenant_id.to_string(),
+    |             ^^^^^^^^^ `ClientMessage::WriteVariable` does not have this field
+    |
+    = note: available fields are: `service_id`
+
+error[E0559]: variant `ClientMessage::WriteVariable` has no field named `service_name`
+   --> src\client.rs:297:13
+    |
+297 |             service_name: service_name.to_string(),
+    |             ^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+297 -             service_name: service_name.to_string(),
+297 +             service_id: service_name.to_string(),
+    |
+
+error[E0559]: variant `ClientMessage::Subscribe` has no field named `tenant_id`
+   --> src\client.rs:314:13
+    |
+314 |             tenant_id: tenant_id.to_string(),
+    |             ^^^^^^^^^ `ClientMessage::Subscribe` does not have this field
+    |
+    = note: available fields are: `service_id`
+
+error[E0559]: variant `ClientMessage::Subscribe` has no field named `service_name`
+   --> src\client.rs:315:13
+    |
+315 |             service_name: service_name.to_string(),
+    |             ^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+315 -             service_name: service_name.to_string(),
+315 +             service_id: service_name.to_string(),
+    |
+
+error[E0559]: variant `ClientMessage::Unsubscribe` has no field named `tenant_id`
+   --> src\client.rs:331:13
+    |
+331 |             tenant_id: tenant_id.to_string(),
+    |             ^^^^^^^^^ `ClientMessage::Unsubscribe` does not have this field
+    |
+    = note: available fields are: `service_id`
+
+error[E0559]: variant `ClientMessage::Unsubscribe` has no field named `service_name`
+   --> src\client.rs:332:13
+    |
+332 |             service_name: service_name.to_string(),
+    |             ^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+332 -             service_name: service_name.to_string(),
+332 +             service_id: service_name.to_string(),
+    |
+
+error[E0308]: mismatched types
+   --> src\client.rs:413:17
+    |
+413 |             Err(CommyError::ConnectionLost)
+    |             --- ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `CommyError`, found enum constructor
+    |             |
+    |             arguments to this enum variant are incorrect
+    |
+   ::: src\error.rs:17:5
+    |
+ 17 |     ConnectionLost(String),
+    |     -------------- `ConnectionLost` defines an enum variant constructor here, which should be called
+    |
+    = note:          expected enum `CommyError`
+            found enum constructor `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}`
+help: the type constructed contains `fn(std::string::String) -> CommyError {CommyError::ConnectionLost}` due to the type of the argument passed
+   --> src\client.rs:413:13
+    |
+413 |             Err(CommyError::ConnectionLost)
+    |             ^^^^--------------------------^
+    |                 |
+    |                 this argument influences the type of `Err`
+note: tuple variant defined here
+   --> C:\Users\cires\.rustup\toolchains\nightly-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\result.rs:566:5
+    |
+566 |     Err(#[stable(feature = "rust1", since = "1.0.0")] E),
+    |     ^^^
+help: use parentheses to construct this tuple variant
+    |
+413 |             Err(CommyError::ConnectionLost(/* std::string::String */))
+    |                                           +++++++++++++++++++++++++++
+
+error[E0282]: type annotations needed
+   --> src\watcher.rs:132:20
+    |
+132 |         ).map_err(|e| CommyError::WatcherError(e.to_string()))?;
+    |                    ^                           - type must be known at this point
+    |
+help: consider giving this closure parameter an explicit type
+    |
+132 |         ).map_err(|e: /* Type */| CommyError::WatcherError(e.to_string()))?;
+    |                     ++++++++++++
+
+error[E0282]: type annotations needed
+   --> src\watcher.rs:136:23
+    |
+136 |             .map_err(|e| CommyError::WatcherError(e.to_string()))?;
+    |                       ^                           - type must be known at this point
+    |
+help: consider giving this closure parameter an explicit type
+    |
+136 |             .map_err(|e: /* Type */| CommyError::WatcherError(e.to_string()))?;
+    |                        ++++++++++++
+
+error[E0599]: no method named `now_or_never` found for opaque type `impl futures::Future<Output = std::option::Option<FileChangeEvent>>` in the current scope
+   --> src\watcher.rs:249:19
+    |
+249 |         rx.recv().now_or_never().flatten()
+    |                   ^^^^^^^^^^^^ method not found in `impl futures::Future<Output = std::option::Option<FileChangeEvent>>`
+    |
+   ::: C:\Users\cires\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.31\src\future\future\mod.rs:592:8
+    |
+592 |     fn now_or_never(self) -> Option<Self::Output>
+    |        ------------ the method is available for `impl futures::Future<Output = std::option::Option<FileChangeEvent>>` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `FutureExt` which provides `now_or_never` is implemented but not in scope; perhaps you want to import it
+    |
+  6 + use futures::FutureExt;
+    |
+
+error[E0277]: `service::ServiceManager` doesn't implement `Debug`
+  --> src\state.rs:20:5
+   |
+11 | #[derive(Debug)]
+   |          ----- in this derive macro expansion
+...
+20 |     pub services: ServiceManager,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Debug` is not implemented for `service::ServiceManager`
+   |
+   = note: add `#[derive(Debug)]` to `service::ServiceManager` or manually `impl Debug for service::ServiceManager`
+help: consider annotating `service::ServiceManager` with `#[derive(Debug)]`
+  --> src\service.rs:77:1
+   |
+77 + #[derive(Debug)]
+78 | pub struct ServiceManager {
+   |
+
+warning: unused variable: `offset`
+  --> src\file_accessor.rs:79:33
+   |
+79 |     async fn write_bytes(&self, offset: u64, data: &[u8]) -> Result<()> {
+   |                                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_offset`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `data`
+  --> src\file_accessor.rs:79:46
+   |
+79 |     async fn write_bytes(&self, offset: u64, data: &[u8]) -> Result<()> {
+   |                                              ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `current`
+   --> src\watcher.rs:198:17
+    |
+198 |             let current = vf.bytes().await;
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_current`
+
+Some errors have detailed explanations: E0026, E0027, E0277, E0282, E0308, E0432, E0559, E0599, E0603.
+For more information about an error, try `rustc --explain E0026`.
+warning: `commy-client` (lib test) generated 11 warnings
+error: could not compile `commy-client` (lib test) due to 26 previous errors; 11 warnings emitted

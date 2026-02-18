@@ -1,0 +1,16 @@
+
+ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù
+Γòæ    Commy Examples GUI Runner           Γòæ
+ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥
+
+≡ƒôª Checking Commy server...
+Γ£ô Commy binary found at: ../target/release/commy.exe
+≡ƒôÑ Downloading Commy server binary...
+  Γö£ΓöÇ Warning: Commy not ready: Commy binary not found. Please build with 'cargo build --release' in main Commy directory
+  ΓööΓöÇ Continuing without Commy server
+
+≡ƒîÉ Starting GUI server...
+  Γö£ΓöÇ Frontend at: http://127.0.0.1:8080
+  Γö£ΓöÇ API at: http://127.0.0.1:8080/api
+  ΓööΓöÇ Open in browser to get started!
+
