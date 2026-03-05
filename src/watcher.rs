@@ -331,4 +331,23 @@ mod tests {
         let result = watcher.register_virtual_file("svc_1".to_string(), vf).await;
         assert!(result.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_start_watching_and_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let watcher = VariableFileWatcher::new(Some(dir.path().to_path_buf()))
+            .await
+            .unwrap();
+
+        // start_watching spawns a background task; should complete without error
+        let start_result = watcher.start_watching().await;
+        assert!(start_result.is_ok(), "start_watching should succeed: {:?}", start_result);
+
+        // Immediately stop — the background task should exit cleanly
+        let stop_result = watcher.stop_watching().await;
+        assert!(stop_result.is_ok(), "stop_watching should succeed after start: {:?}", stop_result);
+
+        // No events should be pending
+        assert!(watcher.try_next_change().await.is_none());
+    }
 }

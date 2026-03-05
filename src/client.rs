@@ -815,6 +815,85 @@ mod tests {
         assert_eq!(client.server_url(), "wss://example.com:9000");
     }
 
+    // ─── File watcher methods ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_init_file_watcher_succeeds() {
+        let client = Client::new("wss://localhost:9000");
+        let result = client.init_file_watcher().await;
+        assert!(result.is_ok(), "init_file_watcher should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_start_file_monitoring_succeeds_and_is_idempotent() {
+        let client = Client::new("wss://localhost:9000");
+        // First call initialises the watcher
+        let r1 = client.start_file_monitoring().await;
+        assert!(r1.is_ok(), "first start_file_monitoring should succeed: {:?}", r1);
+        // Second call is a no-op (watcher already exists)
+        let r2 = client.start_file_monitoring().await;
+        assert!(r2.is_ok(), "second start_file_monitoring should also succeed: {:?}", r2);
+        let _ = client.stop_file_monitoring().await;
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_file_change_uninitialized_returns_err() {
+        let client = Client::new("wss://localhost:9000");
+        // Watcher not initialised — should return Err(InvalidState)
+        let result = client.wait_for_file_change().await;
+        assert!(
+            matches!(result, Err(CommyError::InvalidState(_))),
+            "expected InvalidState error, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_get_file_change_uninitialized_returns_err() {
+        let client = Client::new("wss://localhost:9000");
+        let result = client.try_get_file_change().await;
+        assert!(
+            matches!(result, Err(CommyError::InvalidState(_))),
+            "expected InvalidState error when watcher not initialised, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_try_get_file_change_initialized_returns_ok_none() {
+        let client = Client::new("wss://localhost:9000");
+        client.init_file_watcher().await.unwrap();
+        // No file changes have occurred, so the channel should be empty
+        let result = client.try_get_file_change().await;
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None) with no pending events, got {:?}",
+            result
+        );
+        let _ = client.stop_file_monitoring().await;
+    }
+
+    #[tokio::test]
+    async fn test_stop_file_monitoring_clears_watcher() {
+        let client = Client::new("wss://localhost:9000");
+        client.init_file_watcher().await.unwrap();
+
+        // Watcher is live — non-blocking peek should be Ok(None)
+        assert!(matches!(client.try_get_file_change().await, Ok(None)));
+
+        // Stop the watcher
+        let stop_result = client.stop_file_monitoring().await;
+        assert!(stop_result.is_ok(), "stop_file_monitoring should succeed: {:?}", stop_result);
+
+        // After stopping, the watcher slot is None ⇒ try_get returns InvalidState
+        let after = client.try_get_file_change().await;
+        assert!(
+            matches!(after, Err(CommyError::InvalidState(_))),
+            "expected InvalidState after stopping, got {:?}",
+            after
+        );
+    }
+
     #[tokio::test]
     async fn test_get_virtual_service_file_creates_and_caches() {
         let client = Client::new("wss://localhost:9000");
