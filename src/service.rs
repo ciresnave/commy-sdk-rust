@@ -159,4 +159,120 @@ mod tests {
         assert_eq!(manager.len(), 1);
         assert!(manager.get("svc_1").is_some());
     }
+
+    #[test]
+    fn test_add_and_get_variable() {
+        let mut svc = Service::new(
+            "s".to_string(),
+            "n".to_string(),
+            "t".to_string(),
+            None,
+        );
+
+        let meta = VariableMetadata {
+            name: "counter".to_string(),
+            service_id: "s".to_string(),
+            offset: 0,
+            size: 8,
+            version: 1,
+            created_at: chrono::Utc::now(),
+        };
+        svc.add_variable(meta);
+
+        let got = svc.get_variable("counter");
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().size, 8);
+    }
+
+    #[test]
+    fn test_get_variable_not_found_returns_none() {
+        let svc = Service::new("s".to_string(), "n".to_string(), "t".to_string(), None);
+        assert!(svc.get_variable("nope").is_none());
+    }
+
+    #[test]
+    fn test_variables_map() {
+        let mut svc = Service::new("s".to_string(), "n".to_string(), "t".to_string(), None);
+        let meta = VariableMetadata {
+            name: "x".to_string(),
+            service_id: "s".to_string(),
+            offset: 0,
+            size: 4,
+            version: 1,
+            created_at: chrono::Utc::now(),
+        };
+        svc.add_variable(meta);
+        assert_eq!(svc.variables().len(), 1);
+    }
+
+    #[test]
+    fn test_clear_variables() {
+        let mut svc = Service::new("s".to_string(), "n".to_string(), "t".to_string(), None);
+        svc.add_variable(VariableMetadata {
+            name: "v".to_string(),
+            service_id: "s".to_string(),
+            offset: 0,
+            size: 4,
+            version: 1,
+            created_at: chrono::Utc::now(),
+        });
+        assert!(!svc.variables().is_empty());
+        svc.clear_variables();
+        assert!(svc.variables().is_empty());
+    }
+
+    #[test]
+    fn test_service_without_file_path() {
+        let svc = Service::new("s".to_string(), "n".to_string(), "t".to_string(), None);
+        assert!(!svc.supports_memory_mapping());
+        assert!(svc.file_path().is_none());
+    }
+
+    #[test]
+    fn test_service_with_file_path() {
+        let svc = Service::new(
+            "s".to_string(),
+            "n".to_string(),
+            "t".to_string(),
+            Some("/tmp/svc.mmap".to_string()),
+        );
+        assert!(svc.supports_memory_mapping());
+        assert_eq!(svc.file_path(), Some("/tmp/svc.mmap"));
+    }
+
+    #[test]
+    fn test_service_manager_get_mut() {
+        let mut manager = ServiceManager::new();
+        let svc = Service::new("s1".to_string(), "n".to_string(), "t".to_string(), None);
+        manager.register(svc);
+
+        let got = manager.get_mut("s1");
+        assert!(got.is_some());
+        got.unwrap().name = "modified".to_string();
+        assert_eq!(manager.get("s1").unwrap().name, "modified");
+    }
+
+    #[test]
+    fn test_service_manager_list() {
+        let mut manager = ServiceManager::new();
+        manager.register(Service::new("s1".to_string(), "a".to_string(), "t".to_string(), None));
+        manager.register(Service::new("s2".to_string(), "b".to_string(), "t".to_string(), None));
+        assert_eq!(manager.list().len(), 2);
+    }
+
+    #[test]
+    fn test_service_manager_clear() {
+        let mut manager = ServiceManager::new();
+        manager.register(Service::new("s1".to_string(), "a".to_string(), "t".to_string(), None));
+        assert!(!manager.is_empty());
+        manager.clear();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+    }
+
+    #[test]
+    fn test_service_manager_default_is_empty() {
+        let manager = ServiceManager::default();
+        assert!(manager.is_empty());
+    }
 }

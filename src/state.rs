@@ -133,4 +133,90 @@ mod tests {
         assert!(state.is_authenticated_to("tenant_1"));
         assert_eq!(state.authenticated_tenants().len(), 1);
     }
+
+    #[test]
+    fn test_touch_updates_activity() {
+        let mut state = ClientState::new("client_1".to_string());
+        state.last_activity = chrono::Utc::now() - chrono::Duration::seconds(60);
+        assert!(state.idle_seconds() >= 60);
+        state.touch();
+        assert!(state.idle_seconds() < 5);
+    }
+
+    #[test]
+    fn test_is_authenticated_to_false_for_unknown() {
+        let state = ClientState::new("client_1".to_string());
+        assert!(!state.is_authenticated_to("unknown_tenant"));
+    }
+
+    #[test]
+    fn test_authenticated_tenants_list_multiple() {
+        let mut state = ClientState::new("c".to_string());
+        state.add_auth_context(
+            "t1".to_string(),
+            AuthContext::new("t1".to_string(), vec![]),
+        );
+        state.add_auth_context(
+            "t2".to_string(),
+            AuthContext::new("t2".to_string(), vec![]),
+        );
+        let tenants = state.authenticated_tenants();
+        assert_eq!(tenants.len(), 2);
+    }
+
+    #[test]
+    fn test_clear_auth_removes_single_tenant() {
+        let mut state = ClientState::new("c".to_string());
+        state.add_auth_context(
+            "t1".to_string(),
+            AuthContext::new("t1".to_string(), vec![]),
+        );
+        state.add_auth_context(
+            "t2".to_string(),
+            AuthContext::new("t2".to_string(), vec![]),
+        );
+
+        state.clear_auth("t1");
+        assert!(!state.is_authenticated_to("t1"));
+        assert!(state.is_authenticated_to("t2"));
+    }
+
+    #[test]
+    fn test_clear_all_auth() {
+        let mut state = ClientState::new("c".to_string());
+        state.add_auth_context(
+            "t1".to_string(),
+            AuthContext::new("t1".to_string(), vec![]),
+        );
+        state.clear_all_auth();
+        assert!(state.authenticated_tenants().is_empty());
+    }
+
+    #[test]
+    fn test_reset_clears_state() {
+        let mut state = ClientState::new("c".to_string());
+        state.connection_state = crate::connection::ConnectionState::Connected;
+        state.session_id = Some("ses123".to_string());
+        state.add_auth_context(
+            "t1".to_string(),
+            AuthContext::new("t1".to_string(), vec![]),
+        );
+
+        state.reset();
+
+        assert_eq!(
+            state.connection_state,
+            crate::connection::ConnectionState::Disconnected
+        );
+        assert!(state.session_id.is_none());
+        assert!(state.authenticated_tenants().is_empty());
+    }
+
+    #[test]
+    fn test_create_shared_state() {
+        let shared = create_shared_state("my_client".to_string());
+        // Just verify it's created and can be locked
+        let state = shared.try_read().unwrap();
+        assert_eq!(state.client_id, "my_client");
+    }
 }

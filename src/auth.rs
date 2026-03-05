@@ -96,4 +96,64 @@ mod tests {
         assert!(validate_token_format("valid_token").is_ok());
         assert!(validate_token_format("").is_err());
     }
+
+    #[test]
+    fn test_api_key_credentials() {
+        let creds = api_key("my_key_123".to_string());
+        match creds {
+            AuthCredentials::ApiKey { key } => assert_eq!(key, "my_key_123"),
+            _ => panic!("Expected ApiKey variant"),
+        }
+    }
+
+    #[test]
+    fn test_jwt_credentials() {
+        let creds = jwt("my.jwt.token".to_string());
+        match creds {
+            AuthCredentials::Jwt { token } => assert_eq!(token, "my.jwt.token"),
+            _ => panic!("Expected Jwt variant"),
+        }
+    }
+
+    #[test]
+    fn test_basic_credentials() {
+        let creds = basic("user".to_string(), "pass".to_string());
+        match creds {
+            AuthCredentials::Basic { username, password } => {
+                assert_eq!(username, "user");
+                assert_eq!(password, "pass");
+            }
+            _ => panic!("Expected Basic variant"),
+        }
+    }
+
+    #[test]
+    fn test_is_admin_true() {
+        let ctx = AuthContext::new("t1".to_string(), vec!["admin".to_string()]);
+        assert!(ctx.is_admin());
+    }
+
+    #[test]
+    fn test_is_admin_false() {
+        let ctx = AuthContext::new("t1".to_string(), vec!["read".to_string()]);
+        assert!(!ctx.is_admin());
+    }
+
+    #[test]
+    fn test_is_authenticated_to_matching_tenant() {
+        let ctx = AuthContext::new("my_tenant".to_string(), vec![]);
+        assert!(ctx.is_authenticated_to("my_tenant"));
+    }
+
+    #[test]
+    fn test_is_authenticated_to_different_tenant() {
+        let ctx = AuthContext::new("my_tenant".to_string(), vec![]);
+        assert!(!ctx.is_authenticated_to("other_tenant"));
+    }
+
+    #[test]
+    fn test_validate_token_too_long() {
+        let long_token = "x".repeat(10001);
+        assert!(validate_token_format(&long_token).is_err());
+    }
 }

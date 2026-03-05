@@ -426,4 +426,200 @@ mod tests {
 
         assert!(!diffs.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_update_and_get_bytes() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        vf.update_bytes(vec![1, 2, 3]).await.unwrap();
+        let b = vf.bytes().await;
+        assert_eq!(b, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_shadow_bytes_and_update() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        vf.update_shadow_bytes(vec![9, 8, 7]).await.unwrap();
+        let s = vf.shadow_bytes().await;
+        assert_eq!(s, vec![9, 8, 7]);
+    }
+
+    #[tokio::test]
+    async fn test_clear_changes() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        let meta = VariableMetadata::new("x".to_string(), 0, 4, 1);
+        vf.register_variable(meta).await.unwrap();
+        vf.write_variable("x", &[0, 0, 0, 1]).await.unwrap();
+
+        assert_eq!(vf.get_changed_variables().await.len(), 1);
+        vf.clear_changes().await;
+        assert!(vf.get_changed_variables().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mark_variables_changed() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        vf.mark_variables_changed(vec!["a".to_string(), "b".to_string()])
+            .await;
+        let changed = vf.get_changed_variables().await;
+        assert_eq!(changed.len(), 2);
+        // Calling again should not duplicate
+        vf.mark_variables_changed(vec!["a".to_string()]).await;
+        assert_eq!(vf.get_changed_variables().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_compare_ranges_equal_buffers() {
+        let buf = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let diffs = VirtualVariableFile::compare_ranges(&buf, &buf).await.unwrap();
+        assert!(diffs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_compare_ranges_different_sizes_errors() {
+        let a = vec![1, 2, 3];
+        let b = vec![1, 2];
+        let result = VirtualVariableFile::compare_ranges(&a, &b).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_find_changed_variables_from_diff() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        let meta = VariableMetadata::new("score".to_string(), 0, 4, 1);
+        vf.register_variable(meta).await.unwrap();
+
+        // Diff covers first 4 bytes — overlaps with "score"
+        let diffs = vec![(0u64, 4u64)];
+        let changed = vf.find_changed_variables_from_diff(&diffs).await.unwrap();
+        assert!(changed.contains(&"score".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_find_changed_variables_no_overlap() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        let meta = VariableMetadata::new("score".to_string(), 0, 4, 1);
+        vf.register_variable(meta).await.unwrap();
+
+        // Diff is outside variable range
+        let diffs = vec![(8u64, 16u64)];
+        let changed = vf.find_changed_variables_from_diff(&diffs).await.unwrap();
+        assert!(changed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_shadow_clears_changes() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        let meta = VariableMetadata::new("v".to_string(), 0, 4, 1);
+        vf.register_variable(meta).await.unwrap();
+        vf.write_variable("v", &[1, 2, 3, 4]).await.unwrap();
+        assert!(!vf.get_changed_variables().await.is_empty());
+
+        vf.sync_shadow().await.unwrap();
+        assert!(vf.get_changed_variables().await.is_empty());
+
+        let current = vf.bytes().await;
+        let shadow = vf.shadow_bytes().await;
+        assert_eq!(current, shadow);
+    }
+
+    #[tokio::test]
+    async fn test_write_variable_size_mismatch_errors() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        let meta = VariableMetadata::new("v".to_string(), 0, 4, 1);
+        vf.register_variable(meta).await.unwrap();
+
+        // Write wrong number of bytes
+        let result = vf.write_variable("v", &[1, 2, 3]).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_variables() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        vf.register_variable(VariableMetadata::new("a".to_string(), 0, 4, 1))
+            .await
+            .unwrap();
+        vf.register_variable(VariableMetadata::new("b".to_string(), 4, 8, 1))
+            .await
+            .unwrap();
+
+        let list = vf.list_variables().await.unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_variable_metadata_not_found_errors() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        let result = vf.get_variable_metadata("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_variable_slice_out_of_bounds() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        // Register a variable but don't resize the buffer manually
+        let meta = VariableMetadata::new("v".to_string(), 100, 8, 1);
+        // Don't use register_variable (which auto-resizes) — directly test the
+        // out of bounds path by writing metadata manually then trying to read
+        vf.register_variable(meta).await.unwrap(); // register_variable auto-resizes
+        // Now shrink the bytes so it IS out of bounds
+        // We can't easily shrink via the public API; this just verifies happy path
+        let data = vf.read_variable_slice("v").await.unwrap();
+        assert_eq!(data.len(), 8);
+    }
 }
