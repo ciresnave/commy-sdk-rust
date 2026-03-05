@@ -110,3 +110,69 @@ impl From<tokio_tungstenite::tungstenite::Error> for CommyError {
         CommyError::WebSocketError(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display_messages() {
+        let cases: &[(&str, CommyError)] = &[
+            ("WebSocket error", CommyError::WebSocketError("refused".to_string())),
+            ("Connection lost", CommyError::ConnectionLost("drop".to_string())),
+            ("Authentication failed", CommyError::AuthenticationFailed("bad token".to_string())),
+            ("Unauthorized", CommyError::Unauthorized("no perms".to_string())),
+            ("Not found", CommyError::NotFound("item".to_string())),
+            ("Service not found", CommyError::ServiceNotFound("svc".to_string())),
+            ("Tenant not found", CommyError::TenantNotFound("t1".to_string())),
+            ("Already exists", CommyError::AlreadyExists("x".to_string())),
+            ("Permission denied", CommyError::PermissionDenied("read".to_string())),
+            ("Invalid request", CommyError::InvalidRequest("missing field".to_string())),
+            ("Invalid message format", CommyError::InvalidMessage("bad fmt".to_string())),
+            ("timeout", CommyError::Timeout),
+            ("Channel error", CommyError::ChannelError("closed".to_string())),
+            ("Invalid state", CommyError::InvalidState("disconnected".to_string())),
+            ("Memory mapping error", CommyError::MemoryMappingError("mmap fail".to_string())),
+            ("File watcher error", CommyError::WatcherError("watch fail".to_string())),
+            ("Variable not found", CommyError::VariableNotFound("var_x".to_string())),
+            ("Invalid variable offset", CommyError::InvalidOffset("bad offset".to_string())),
+            ("SIMD operation error", CommyError::SimdError("simd fail".to_string())),
+            ("just misc", CommyError::Other("just misc".to_string())),
+        ];
+
+        for (fragment, err) in cases {
+            let s = err.to_string();
+            assert!(
+                s.to_lowercase().contains(&fragment.to_lowercase()),
+                "Display for {:?} should contain '{}', got: '{}'",
+                err,
+                fragment,
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let commy_err = CommyError::from(io_err);
+        assert!(matches!(commy_err, CommyError::FileError(_)));
+    }
+
+    #[test]
+    fn test_from_serde_json_error() {
+        let json_err = serde_json::from_str::<i32>("not_a_number").unwrap_err();
+        let commy_err = CommyError::from(json_err);
+        assert!(matches!(commy_err, CommyError::SerializationError(_)));
+    }
+
+    #[test]
+    fn test_from_tungstenite_error() {
+        use tokio_tungstenite::tungstenite::Error as WsError;
+        // ConnectionClosed is a unit variant available in all tungstenite versions
+        let ws_err = WsError::ConnectionClosed;
+        let commy_err = CommyError::from(ws_err);
+        assert!(matches!(commy_err, CommyError::WebSocketError(_)));
+        assert!(commy_err.to_string().contains("WebSocket error"));
+    }
+}

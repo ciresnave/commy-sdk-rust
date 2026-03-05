@@ -282,3 +282,130 @@ impl From<ErrorCode> for crate::error::CommyError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::CommyError;
+
+    #[test]
+    fn test_error_code_all_variants_convert_correctly() {
+        // NotFound
+        let e: CommyError = ErrorCode::NotFound.into();
+        assert!(matches!(e, CommyError::NotFound(_)));
+
+        // PermissionDenied
+        let e: CommyError = ErrorCode::PermissionDenied.into();
+        assert!(matches!(e, CommyError::PermissionDenied(_)));
+
+        // Unauthorized
+        let e: CommyError = ErrorCode::Unauthorized.into();
+        assert!(matches!(e, CommyError::Unauthorized(_)));
+
+        // AlreadyExists
+        let e: CommyError = ErrorCode::AlreadyExists.into();
+        assert!(matches!(e, CommyError::AlreadyExists(_)));
+
+        // InvalidRequest
+        let e: CommyError = ErrorCode::InvalidRequest.into();
+        assert!(matches!(e, CommyError::InvalidRequest(_)));
+
+        // InternalError -> Other
+        let e: CommyError = ErrorCode::InternalError.into();
+        assert!(matches!(e, CommyError::Other(_)));
+
+        // ConnectionLost
+        let e: CommyError = ErrorCode::ConnectionLost.into();
+        assert!(matches!(e, CommyError::ConnectionLost(_)));
+
+        // Timeout
+        let e: CommyError = ErrorCode::Timeout.into();
+        assert!(matches!(e, CommyError::Timeout));
+    }
+
+    #[test]
+    fn test_error_code_serialization_round_trip() {
+        let codes = [
+            ErrorCode::NotFound,
+            ErrorCode::PermissionDenied,
+            ErrorCode::Unauthorized,
+            ErrorCode::AlreadyExists,
+            ErrorCode::InvalidRequest,
+            ErrorCode::InternalError,
+            ErrorCode::ConnectionLost,
+            ErrorCode::Timeout,
+        ];
+        for code in codes {
+            let json = serde_json::to_string(&code).unwrap();
+            let decoded: ErrorCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, code);
+        }
+    }
+
+    #[test]
+    fn test_client_message_authenticate_serialization() {
+        let msg = ClientMessage::Authenticate {
+            tenant_id: "tenant1".to_string(),
+            client_version: "0.1.0".to_string(),
+            credentials: AuthCredentials::ApiKey { key: "secret".to_string() },
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, ClientMessage::Authenticate { .. }));
+    }
+
+    #[test]
+    fn test_client_message_heartbeat_serialization() {
+        let msg = ClientMessage::Heartbeat { client_id: "c1".to_string() };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, ClientMessage::Heartbeat { .. }));
+    }
+
+    #[test]
+    fn test_server_message_authentication_result_serialization() {
+        let msg = ServerMessage::AuthenticationResult {
+            success: true,
+            message: "OK".to_string(),
+            server_version: "0.1.0".to_string(),
+            permissions: Some(vec!["read".to_string()]),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded, ServerMessage::AuthenticationResult { success: true, .. }));
+    }
+
+    #[test]
+    fn test_server_message_error_serialization() {
+        let msg = ServerMessage::Error {
+            code: ErrorCode::NotFound,
+            message: "Not found".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            ServerMessage::Error { code, .. } => assert_eq!(code, ErrorCode::NotFound),
+            _ => panic!("Expected ServerMessage::Error"),
+        }
+    }
+
+    #[test]
+    fn test_auth_credentials_variants_serialization() {
+        let jwt = AuthCredentials::Jwt { token: "tok".to_string() };
+        let json = serde_json::to_string(&jwt).unwrap();
+        assert!(json.contains("jwt"));
+
+        let basic = AuthCredentials::Basic {
+            username: "user".to_string(),
+            password: "pass".to_string(),
+        };
+        let json = serde_json::to_string(&basic).unwrap();
+        assert!(json.contains("basic"));
+
+        let custom = AuthCredentials::Custom {
+            data: serde_json::json!({"key": "val"}),
+        };
+        let json = serde_json::to_string(&custom).unwrap();
+        assert!(json.contains("custom"));
+    }
+}
