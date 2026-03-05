@@ -814,4 +814,31 @@ mod tests {
         let client = Client::new("wss://example.com:9000");
         assert_eq!(client.server_url(), "wss://example.com:9000");
     }
+
+    #[tokio::test]
+    async fn test_get_virtual_service_file_creates_and_caches() {
+        let client = Client::new("wss://localhost:9000");
+
+        // First call creates the virtual file
+        let vf1 = client
+            .get_virtual_service_file("tenant_a", "my_service")
+            .await
+            .expect("should create virtual service file");
+
+        // Second call with same args returns the cached instance (same Arc pointer)
+        let vf2 = client
+            .get_virtual_service_file("tenant_a", "my_service")
+            .await
+            .expect("should return cached virtual service file");
+
+        assert!(Arc::ptr_eq(&vf1, &vf2), "second call should return the cached VirtualVariableFile");
+
+        // Different service name → different file
+        let vf3 = client
+            .get_virtual_service_file("tenant_a", "other_service")
+            .await
+            .expect("should create a separate virtual service file");
+
+        assert!(!Arc::ptr_eq(&vf1, &vf3), "different service should be a separate file");
+    }
 }
