@@ -275,4 +275,48 @@ mod tests {
         let manager = ServiceManager::default();
         assert!(manager.is_empty());
     }
+
+    #[test]
+    fn test_service_name() {
+        let svc = Service::new(
+            "id1".to_string(),
+            "my-service".to_string(),
+            "tenant1".to_string(),
+            None,
+        );
+        assert_eq!(svc.name(), "my-service");
+    }
+
+    #[test]
+    fn test_service_tenant_id() {
+        let svc = Service::new(
+            "id1".to_string(),
+            "svc".to_string(),
+            "org-tenant".to_string(),
+            None,
+        );
+        assert_eq!(svc.tenant_id(), "org-tenant");
+    }
+
+    #[test]
+    fn test_service_manager_len() {
+        let mut manager = ServiceManager::new();
+        assert_eq!(manager.len(), 0);
+
+        manager.register(Service::new(
+            "s1".to_string(),
+            "svc1".to_string(),
+            "t1".to_string(),
+            None,
+        ));
+        assert_eq!(manager.len(), 1);
+
+        manager.register(Service::new(
+            "s2".to_string(),
+            "svc2".to_string(),
+            "t1".to_string(),
+            None,
+        ));
+        assert_eq!(manager.len(), 2);
+    }
 }

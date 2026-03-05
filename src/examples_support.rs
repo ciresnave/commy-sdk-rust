@@ -245,4 +245,19 @@ mod tests {
         let server = CommyServer::default();
         assert!(server.url().starts_with("wss://"));
     }
+
+    #[test]
+    fn test_commy_server_new_uses_config_port() {
+        let config = ServerConfig::default().with_port(7777);
+        let server = CommyServer::new(config);
+        assert_eq!(server.url(), "wss://127.0.0.1:7777");
+    }
+
+    #[test]
+    fn test_server_config_with_port_immutable_default() {
+        let config1 = ServerConfig::default();
+        let config2 = config1.clone().with_port(9999);
+        assert_eq!(config1.port, 8443);
+        assert_eq!(config2.port, 9999);
+    }
 }

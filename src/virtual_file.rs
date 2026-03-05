@@ -622,4 +622,45 @@ mod tests {
         let data = vf.read_variable_slice("v").await.unwrap();
         assert_eq!(data.len(), 8);
     }
+
+    #[test]
+    fn test_service_id_accessor() {
+        let vf = VirtualVariableFile::new(
+            "svc-id-42".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+        assert_eq!(vf.service_id(), "svc-id-42");
+    }
+
+    #[test]
+    fn test_service_name_accessor() {
+        let vf = VirtualVariableFile::new(
+            "id".to_string(),
+            "my-service".to_string(),
+            "t1".to_string(),
+        );
+        assert_eq!(vf.service_name(), "my-service");
+    }
+
+    #[test]
+    fn test_tenant_id_accessor() {
+        let vf = VirtualVariableFile::new(
+            "id".to_string(),
+            "svc".to_string(),
+            "tenant_xyz".to_string(),
+        );
+        assert_eq!(vf.tenant_id(), "tenant_xyz");
+    }
+
+    #[test]
+    fn test_variable_metadata_with_persistent() {
+        let meta = VariableMetadata::new("var1".to_string(), 0, 8, 1)
+            .with_persistent(true);
+        assert!(meta.persistent);
+
+        let meta2 = VariableMetadata::new("var2".to_string(), 8, 4, 2)
+            .with_persistent(false);
+        assert!(!meta2.persistent);
+    }
 }
