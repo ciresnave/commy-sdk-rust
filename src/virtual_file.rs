@@ -663,4 +663,110 @@ mod tests {
             .with_persistent(false);
         assert!(!meta2.persistent);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Gap test #8: write to a variable at a nonzero offset must not overwrite
+    // adjacent variables.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_write_variable_at_nonzero_offset_does_not_corrupt_adjacent() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        // Two adjacent 4-byte variables
+        vf.register_variable(VariableMetadata::new("a".to_string(), 0, 4, 1))
+            .await
+            .unwrap();
+        vf.register_variable(VariableMetadata::new("b".to_string(), 4, 4, 1))
+            .await
+            .unwrap();
+
+        // Write known bytes to both
+        vf.write_variable("a", &[0xAA, 0xBB, 0xCC, 0xDD]).await.unwrap();
+        vf.write_variable("b", &[0x11, 0x22, 0x33, 0x44]).await.unwrap();
+
+        // Now overwrite only "b"
+        vf.write_variable("b", &[0xFF, 0xFE, 0xFD, 0xFC]).await.unwrap();
+
+        // "a" must be unchanged
+        let a_bytes = vf.read_variable_slice("a").await.unwrap();
+        assert_eq!(
+            a_bytes,
+            vec![0xAA, 0xBB, 0xCC, 0xDD],
+            "Writing variable 'b' corrupted adjacent variable 'a'"
+        );
+
+        // "b" must have the new value
+        let b_bytes = vf.read_variable_slice("b").await.unwrap();
+        assert_eq!(b_bytes, vec![0xFF, 0xFE, 0xFD, 0xFC]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Gap test #9: compare_ranges must detect a difference in the very LAST
+    // byte of the buffer (tail detection).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_compare_ranges_detects_last_byte_difference() {
+        let mut a = vec![0u8; 11];
+        let mut b = vec![0u8; 11];
+        // Only the last byte differs
+        a[10] = 0x00;
+        b[10] = 0xFF;
+
+        let diffs = VirtualVariableFile::compare_ranges(&a, &b).await.unwrap();
+        assert!(
+            !diffs.is_empty(),
+            "compare_ranges must detect a change in the last byte"
+        );
+        // The diff range must include byte index 10
+        let covers_last = diffs.iter().any(|&(start, end)| start <= 10 && 10 < end);
+        assert!(
+            covers_last,
+            "Diff ranges {:?} must cover the changed byte at index 10",
+            diffs
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Gap test #10: find_changed_variables_from_diff must report ALL variables
+    // that overlap with the diff, including when two variables share a diff
+    // range that spans both.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_find_changed_variables_multiple_overlapping() {
+        let vf = VirtualVariableFile::new(
+            "svc".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+
+        // Two variables that overlap in the [4, 8) range of an 8-byte buffer
+        vf.register_variable(VariableMetadata::new("x".to_string(), 0, 8, 1))
+            .await
+            .unwrap();
+        vf.register_variable(VariableMetadata::new("y".to_string(), 4, 4, 1))
+            .await
+            .unwrap();
+
+        // A diff spanning exactly the overlap region [4, 8)
+        let diffs = vec![(4u64, 8u64)];
+        let changed = vf.find_changed_variables_from_diff(&diffs).await.unwrap();
+
+        assert!(
+            changed.contains(&"x".to_string()),
+            "Variable 'x' (0..8) overlaps diff [4,8) and must be reported. Got: {:?}",
+            changed
+        );
+        assert!(
+            changed.contains(&"y".to_string()),
+            "Variable 'y' (4..8) overlaps diff [4,8) and must be reported. Got: {:?}",
+            changed
+        );
+    }
 }

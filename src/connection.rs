@@ -98,6 +98,30 @@ impl Connection {
             ConnectionState::Connected | ConnectionState::Authenticated
         )
     }
+
+    /// Create a mock connection for testing that uses in-memory channels.
+    ///
+    /// Returns `(conn, server_tx, client_rx)` where:
+    /// - `conn` is the mock `Connection` ready to be injected into a `Client`
+    /// - `server_tx` is used by the test to **inject** `ServerMessage` responses
+    /// - `client_rx` is used by the test to **observe** `ClientMessage`s sent by the client
+    #[cfg(test)]
+    pub fn new_for_test()
+    -> (Self, mpsc::UnboundedSender<ServerMessage>, mpsc::UnboundedReceiver<ClientMessage>)
+    {
+        let (server_inbound_tx, server_inbound_rx) =
+            mpsc::unbounded_channel::<ServerMessage>();
+        let (client_outbound_tx, client_outbound_rx) =
+            mpsc::unbounded_channel::<ClientMessage>();
+
+        let conn = Self {
+            state: Arc::new(RwLock::new(ConnectionState::Connected)),
+            tx: client_outbound_tx,
+            rx: Arc::new(RwLock::new(server_inbound_rx)),
+        };
+
+        (conn, server_inbound_tx, client_outbound_rx)
+    }
 }
 
 #[cfg(test)]

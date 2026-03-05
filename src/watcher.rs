@@ -350,4 +350,87 @@ mod tests {
         // No events should be pending
         assert!(watcher.try_next_change().await.is_none());
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Gap test #12: handle_file_change must skip files that don't end in .mem
+    // and must handle .mem files for unregistered service IDs gracefully.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// A non-.mem file path is silently skipped (returns Ok, emits no events).
+    #[tokio::test]
+    async fn test_handle_file_change_skips_non_mem_extension() {
+        use std::path::PathBuf;
+        use tokio::sync::mpsc;
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
+        use std::sync::Arc;
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<FileChangeEvent>();
+        let virtual_files = Arc::new(RwLock::new(HashMap::new()));
+
+        let non_mem_path = PathBuf::from("/tmp/commy_test_skip/config.json");
+
+        let result = VariableFileWatcher::handle_file_change(
+            &non_mem_path,
+            &tx,
+            &virtual_files,
+        )
+        .await;
+
+        // No error — non-.mem files are silently ignored
+        assert!(
+            result.is_ok(),
+            "Non-.mem file should not cause an error, got: {:?}",
+            result
+        );
+
+        // No change event should have been emitted
+        assert!(
+            rx.try_recv().is_err(),
+            "Non-.mem file must not emit a FileChangeEvent"
+        );
+    }
+
+    /// A properly-named service_<id>.mem file whose service ID is NOT
+    /// registered in the virtual_files map must produce Ok() and no event.
+    #[tokio::test]
+    async fn test_handle_file_change_skips_unregistered_service() {
+        use std::path::PathBuf;
+        use tokio::sync::mpsc;
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
+        use std::sync::Arc;
+        use crate::virtual_file::VirtualVariableFile;
+
+        let dir = tempfile::tempdir().unwrap();
+        let service_id = "unknown_service_abc123";
+        let file_path = dir
+            .path()
+            .join(format!("service_{}.mem", service_id));
+
+        // Create the .mem file with some content so tokio::fs::read succeeds
+        std::fs::write(&file_path, b"some_content_here").unwrap();
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<FileChangeEvent>();
+        // Empty virtual_files — no virtual file registered for this service
+        let virtual_files: Arc<RwLock<HashMap<String, Arc<VirtualVariableFile>>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let result = VariableFileWatcher::handle_file_change(
+            &file_path,
+            &tx,
+            &virtual_files,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Unregistered .mem file should not cause an error, got: {:?}",
+            result
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "Unregistered .mem file must not emit a FileChangeEvent"
+        );
+    }
 }

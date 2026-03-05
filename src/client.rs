@@ -183,13 +183,12 @@ impl Client {
 
         // Wait for authentication result
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::AuthenticationResult {
-                success,
-                permissions,
-                ..
-            }))) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                if success {
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::AuthenticationResult {
+                    success: true,
+                    permissions,
+                    ..
+                }))) => {
                     let auth_context =
                         AuthContext::new(tenant_id.to_string(), permissions.unwrap_or_default());
 
@@ -198,13 +197,15 @@ impl Client {
                     state.add_auth_context(tenant_id.to_string(), auth_context.clone());
 
                     Ok(auth_context)
-                } else {
-                    Err(CommyError::AuthenticationFailed(
-                        "Authentication denied by server".to_string(),
-                    ))
                 }
-            } else {
-                Err(CommyError::Timeout)
+                Ok(Ok(Some(ServerMessage::AuthenticationResult { success: false, message, .. }))) => {
+                    Err(CommyError::AuthenticationFailed(message))
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                    Err(CommyError::from(code))
+                }
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -249,12 +250,11 @@ impl Client {
 
         // Wait for service response
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::Service { service_id, .. }))) =
-                tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                Ok(service_id)
-            } else {
-                Err(CommyError::Timeout)
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::Service { service_id, .. }))) => Ok(service_id),
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -289,17 +289,19 @@ impl Client {
 
         // Wait for service response
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::Service {
-                service_id,
-                service_name,
-                tenant_id: resp_tenant,
-                file_path,
-            }))) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                let service = Service::new(service_id, service_name, resp_tenant, file_path);
-                Ok(service)
-            } else {
-                Err(CommyError::Timeout)
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::Service {
+                    service_id,
+                    service_name,
+                    tenant_id: resp_tenant,
+                    file_path,
+                }))) => {
+                    let service = Service::new(service_id, service_name, resp_tenant, file_path);
+                    Ok(service)
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -334,12 +336,14 @@ impl Client {
 
         // Wait for result acknowledgment
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::Result { success: true, .. }))) =
-                tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                Ok(())
-            } else {
-                Err(CommyError::Timeout)
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::Result { success: true, .. }))) => Ok(()),
+                Ok(Ok(Some(ServerMessage::Result { success: false, message, .. }))) => {
+                    Err(CommyError::PermissionDenied(message))
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -367,15 +371,18 @@ impl Client {
 
         // Wait for result
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::TenantResult {
-                success: true,
-                tenant_id: returned_id,
-                ..
-            }))) = tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                Ok(returned_id)
-            } else {
-                Err(CommyError::Timeout)
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::TenantResult {
+                    success: true,
+                    tenant_id: returned_id,
+                    ..
+                }))) => Ok(returned_id),
+                Ok(Ok(Some(ServerMessage::TenantResult { success: false, message, .. }))) => {
+                    Err(CommyError::PermissionDenied(message))
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -403,12 +410,14 @@ impl Client {
 
         // Wait for result acknowledgment
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::Result { success: true, .. }))) =
-                tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                Ok(())
-            } else {
-                Err(CommyError::Timeout)
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::Result { success: true, .. }))) => Ok(()),
+                Ok(Ok(Some(ServerMessage::Result { success: false, message, .. }))) => {
+                    Err(CommyError::PermissionDenied(message))
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -427,12 +436,11 @@ impl Client {
 
         // Wait for variable data
         if let Some(conn) = &*self.connection.read().await {
-            if let Ok(Ok(Some(ServerMessage::VariableData { data, .. }))) =
-                tokio::time::timeout(Duration::from_secs(10), conn.recv()).await
-            {
-                Ok(data)
-            } else {
-                Err(CommyError::Timeout)
+            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::VariableData { data, .. }))) => Ok(data),
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
+                Err(_) => Err(CommyError::Timeout),
+                _ => Err(CommyError::Timeout),
             }
         } else {
             Err(CommyError::ConnectionLost(
@@ -758,6 +766,31 @@ impl Client {
         }
         Ok(())
     }
+
+    /// Inject a pre-built `Connection` into the client (for unit testing without a real server).
+    ///
+    /// Sets the connection field **and** advances `connection_state` to `Connected` so
+    /// subsequent permission guards behave correctly.
+    #[cfg(test)]
+    pub async fn inject_connection_for_test(&self, conn: Connection) {
+        let mut c = self.connection.write().await;
+        *c = Some(conn);
+        let mut state = self.state.write().await;
+        state.connection_state = ConnectionState::Connected;
+    }
+
+    /// Inject an authenticated tenant context (no real server auth required).
+    #[cfg(test)]
+    pub async fn inject_auth_for_test(&self, tenant_id: &str) {
+        let mut state = self.state.write().await;
+        state.add_auth_context(
+            tenant_id.to_string(),
+            AuthContext::new(
+                tenant_id.to_string(),
+                vec!["read".to_string(), "write".to_string()],
+            ),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -966,5 +999,247 @@ mod tests {
             crate::error::CommyError::PermissionDenied(_) => {}
             e => panic!("Expected PermissionDenied, got {:?}", e),
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Bug #14 regression tests: server Error response must NOT be silently
+    // converted to Timeout.  These verify the match-based response handlers.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Helper: creates a Client with injected mock connection that immediately
+    /// returns `response` when the next recv() is called.
+    /// Returns `(client, _client_rx)` — the caller MUST keep `_client_rx` alive
+    /// for the duration of the test, otherwise the sender channel closes and
+    /// `send_message` will fail with `ChannelError`.
+    async fn setup_client_with_mock_response(
+        tenant_id: &str,
+        response: crate::message::ServerMessage,
+    ) -> (Client, tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>) {
+        let client = Client::new("wss://test");
+        let (conn, server_tx, client_rx) = crate::connection::Connection::new_for_test();
+        // Pre-load the server-side response channel BEFORE injecting
+        server_tx.send(response).expect("pre-send failed");
+        client.inject_auth_for_test(tenant_id).await;
+        client.inject_connection_for_test(conn).await;
+        (client, client_rx)
+    }
+
+    /// #14: create_service receiving Error{NotFound} must return Err(NotFound),
+    /// NOT Err(Timeout) as was the bug.
+    #[tokio::test]
+    async fn test_create_service_server_error_returns_not_found_not_timeout() {
+        let err_response = crate::message::ServerMessage::Error {
+            code: crate::message::ErrorCode::NotFound,
+            message: "service creation failed: not found".to_string(),
+        };
+        let (client, _client_rx) = setup_client_with_mock_response("tenant_a", err_response).await;
+        let result = client.create_service("tenant_a", "missing_svc").await;
+        assert!(result.is_err(), "create_service must fail on Error response");
+        match result.unwrap_err() {
+            CommyError::NotFound(_) => {} // Correct: server error is properly translated
+            CommyError::Timeout => panic!(
+                "Bug #14 regressed: server Error{{NotFound}} was silently converted to Timeout"
+            ),
+            e => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    /// #14: get_service receiving Error{PermissionDenied} must return Err(PermissionDenied).
+    #[tokio::test]
+    async fn test_get_service_server_error_returns_permission_denied_not_timeout() {
+        let err_response = crate::message::ServerMessage::Error {
+            code: crate::message::ErrorCode::PermissionDenied,
+            message: "insufficient permissions".to_string(),
+        };
+        let (client, _client_rx) = setup_client_with_mock_response("tenant_b", err_response).await;
+        let result = client.get_service("tenant_b", "svc").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::PermissionDenied(_) => {}
+            CommyError::Timeout => panic!(
+                "Bug #14 regressed: server Error{{PermissionDenied}} was silently converted to Timeout"
+            ),
+            e => panic!("Unexpected error variant: {:?}", e),
+        }
+    }
+
+    /// #14: delete_service receiving Error{AlreadyExists} (a non-success error)
+    /// must return Err(AlreadyExists), NOT Err(Timeout).
+    #[tokio::test]
+    async fn test_delete_service_server_error_returns_proper_error_not_timeout() {
+        let err_response = crate::message::ServerMessage::Error {
+            code: crate::message::ErrorCode::AlreadyExists,
+            message: "unexpected".to_string(),
+        };
+        let (client, _client_rx) = setup_client_with_mock_response("tenant_c", err_response).await;
+        let result = client.delete_service("tenant_c", "svc").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::AlreadyExists(_) => {}
+            CommyError::Timeout => panic!(
+                "Bug #14 regressed: server Error{{AlreadyExists}} was silently converted to Timeout"
+            ),
+            e => panic!("Unexpected error variant: {:?}", e),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Authentication edge-case tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// #2 (SDK): authenticate where server responds with success=false must
+    /// return Err(AuthenticationFailed), not Err(Timeout).
+    #[tokio::test]
+    async fn test_authenticate_success_false_returns_auth_failed() {
+        let client = Client::new("wss://test");
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        server_tx
+            .send(crate::message::ServerMessage::AuthenticationResult {
+                success: false,
+                message: "invalid credentials".to_string(),
+                server_version: "0.1.0".to_string(),
+                permissions: None,
+            })
+            .expect("pre-send failed");
+        client.inject_connection_for_test(conn).await;
+
+        let creds = crate::message::AuthCredentials::ApiKey {
+            key: "bad_key".to_string(),
+        };
+        let result = client.authenticate("tenant_a", creds).await;
+
+        assert!(result.is_err(), "authenticate must fail when success=false");
+        match result.unwrap_err() {
+            CommyError::AuthenticationFailed(msg) => {
+                assert!(
+                    msg.contains("invalid credentials"),
+                    "Error message should propagate: {}",
+                    msg
+                );
+            }
+            CommyError::Timeout => panic!(
+                "authenticate success=false was silently converted to Timeout"
+            ),
+            e => panic!("Unexpected error: {:?}", e),
+        }
+    }
+
+    /// authenticate receiving Error{Unauthorized} returns Err(Unauthorized).
+    #[tokio::test]
+    async fn test_authenticate_error_response_returns_unauthorized() {
+        let client = Client::new("wss://test");
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        server_tx
+            .send(crate::message::ServerMessage::Error {
+                code: crate::message::ErrorCode::Unauthorized,
+                message: "bad token".to_string(),
+            })
+            .expect("pre-send failed");
+        client.inject_connection_for_test(conn).await;
+
+        let creds = crate::message::AuthCredentials::Jwt {
+            token: "expired-token".to_string(),
+        };
+        let result = client.authenticate("tenant_a", creds).await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), CommyError::Unauthorized(_)),
+            "Expected Unauthorized"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Connection lifecycle tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// #5: disconnect() must clear both the connection and all auth contexts.
+    #[tokio::test]
+    async fn test_disconnect_clears_connection_and_auth() {
+        let client = Client::new("wss://test");
+        let (conn, _server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        client.inject_auth_for_test("tenant_a").await;
+        client.inject_connection_for_test(conn).await;
+
+        // Preconditions
+        assert!(client.is_connected().await, "must be connected before disconnect");
+        assert!(
+            client.is_authenticated_to("tenant_a").await,
+            "must be authenticated before disconnect"
+        );
+
+        let result = client.disconnect().await;
+        assert!(result.is_ok(), "disconnect should succeed: {:?}", result);
+
+        // Post-conditions
+        assert!(!client.is_connected().await, "connection must be cleared after disconnect");
+        assert!(
+            !client.is_authenticated_to("tenant_a").await,
+            "auth must be cleared after disconnect"
+        );
+        assert!(
+            client.authenticated_tenants().await.is_empty(),
+            "all auth contexts must be removed after disconnect"
+        );
+        assert_eq!(
+            client.connection_state().await,
+            crate::connection::ConnectionState::Disconnected,
+            "state must be Disconnected after disconnect"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Bug #15 documentation test: concurrent CRUD methods share a single
+    // receiver, so interleaved responses can be mismatched.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// #15: Demonstrates the concurrent receiver race: if two tasks call
+    /// create_service simultaneously on the SAME client instance, both share
+    /// the same Arc<RwLock<Receiver>>.  The first recv() winner gets the only
+    /// response; the loser sees Timeout or a mis-attributed response.
+    ///
+    /// This test documents the KNOWN limitation — it is NOT asserting correct
+    /// behaviour but that the race DOES produce observable mis-routing.
+    #[tokio::test]
+    async fn test_concurrent_create_service_receiver_race_documented() {
+        use std::sync::Arc;
+
+        let client = Arc::new(Client::new("wss://test"));
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+
+        // Only one Service response in the channel — two tasks will race for it
+        server_tx
+            .send(crate::message::ServerMessage::Service {
+                service_id: "svc-1".to_string(),
+                service_name: "svc_name".to_string(),
+                tenant_id: "t1".to_string(),
+                file_path: None,
+            })
+            .expect("pre-send one response");
+
+        client.inject_auth_for_test("t1").await;
+        client.inject_connection_for_test(conn).await;
+
+        let c1 = Arc::clone(&client);
+        let c2 = Arc::clone(&client);
+
+        // Spawn both concurrently — only one can win the recv()
+        let (r1, r2) = tokio::join!(
+            tokio::spawn(async move { c1.create_service("t1", "svc_a").await }),
+            tokio::spawn(async move { c2.create_service("t1", "svc_b").await }),
+        );
+
+        let r1 = r1.expect("task 1 panicked");
+        let r2 = r2.expect("task 2 panicked");
+
+        // Exactly ONE task should get the single response; the other times out
+        // or gets an error.  Both succeeding simultaneously would indicate a
+        // bug (response duplication).
+        let successes = [r1.is_ok(), r2.is_ok()].iter().filter(|&&b| b).count();
+        assert!(
+            successes <= 1,
+            "Both concurrent create_service calls succeeded with a single server response — \
+             this indicates response duplication which is a serious protocol bug. \
+             Expected at most 1 success."
+        );
     }
 }
