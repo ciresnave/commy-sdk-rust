@@ -789,4 +789,29 @@ mod tests {
         let idle = client.idle_seconds().await;
         assert!(idle < 2);
     }
+
+    #[tokio::test]
+    async fn test_connection_state_initially_disconnected() {
+        let client = Client::new("wss://localhost:9000");
+        assert_eq!(client.connection_state().await, ConnectionState::Disconnected);
+    }
+
+    #[tokio::test]
+    async fn test_authenticated_tenants_initially_empty() {
+        let client = Client::new("wss://localhost:9000");
+        let tenants = client.authenticated_tenants().await;
+        assert!(tenants.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_is_authenticated_to_false() {
+        let client = Client::new("wss://localhost:9000");
+        assert!(!client.is_authenticated_to("any_tenant").await);
+    }
+
+    #[test]
+    fn test_client_server_url() {
+        let client = Client::new("wss://example.com:9000");
+        assert_eq!(client.server_url(), "wss://example.com:9000");
+    }
 }

@@ -202,4 +202,41 @@ mod tests {
         let data = accessor.read_bytes(0, 8).await.unwrap();
         assert_eq!(data, vec![0, 0, 99, 88, 77, 0, 0, 0]);
     }
+
+    #[tokio::test]
+    async fn test_remote_file_accessor_new_is_empty() {
+        let accessor = RemoteFileAccessor::new();
+        let size = accessor.file_size().await.unwrap();
+        assert_eq!(size, 0);
+    }
+
+    #[tokio::test]
+    async fn test_remote_get_buffer() {
+        let accessor = RemoteFileAccessor::new();
+        accessor.update_buffer(vec![10, 20, 30]).await.unwrap();
+        let buf = accessor.get_buffer().await;
+        assert_eq!(buf, vec![10, 20, 30]);
+    }
+
+    #[tokio::test]
+    async fn test_remote_resize() {
+        let accessor = RemoteFileAccessor::new();
+        accessor.resize(64).await.unwrap();
+        let size = accessor.file_size().await.unwrap();
+        assert_eq!(size, 64);
+    }
+
+    #[tokio::test]
+    async fn test_remote_is_local_false() {
+        let accessor = RemoteFileAccessor::new();
+        assert!(!accessor.is_local());
+    }
+
+    #[tokio::test]
+    async fn test_remote_read_out_of_bounds_returns_error() {
+        let accessor = RemoteFileAccessor::new();
+        accessor.update_buffer(vec![1, 2, 3]).await.unwrap();
+        let result = accessor.read_bytes(0, 100).await;
+        assert!(result.is_err());
+    }
 }

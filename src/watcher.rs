@@ -294,4 +294,41 @@ mod tests {
         let path = create_temp_service_file("test_service").await.unwrap();
         assert!(path.to_string_lossy().contains("service_test_service.mem"));
     }
+
+    #[tokio::test]
+    async fn test_watcher_watch_dir_is_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let watcher = VariableFileWatcher::new(Some(path.clone())).await.unwrap();
+        assert_eq!(watcher.watch_dir(), path.as_path());
+    }
+
+    #[tokio::test]
+    async fn test_try_next_change_empty() {
+        let watcher = VariableFileWatcher::new(None).await.unwrap();
+        let event = watcher.try_next_change().await;
+        assert!(event.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stop_watching_without_start() {
+        let watcher = VariableFileWatcher::new(None).await.unwrap();
+        // Should not error when stopping without first starting
+        let result = watcher.stop_watching().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_register_virtual_file() {
+        use crate::virtual_file::VirtualVariableFile;
+        use std::sync::Arc;
+        let watcher = VariableFileWatcher::new(None).await.unwrap();
+        let vf = Arc::new(VirtualVariableFile::new(
+            "svc_1".to_string(),
+            "service_one".to_string(),
+            "tenant_one".to_string(),
+        ));
+        let result = watcher.register_virtual_file("svc_1".to_string(), vf).await;
+        assert!(result.is_ok());
+    }
 }

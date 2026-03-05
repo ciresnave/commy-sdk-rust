@@ -109,4 +109,43 @@ mod tests {
         let state = ConnectionState::Connected;
         assert!(matches!(state, ConnectionState::Connected));
     }
+
+    #[test]
+    fn test_connection_state_disconnected() {
+        let state = ConnectionState::Disconnected;
+        assert!(matches!(state, ConnectionState::Disconnected));
+        assert_ne!(state, ConnectionState::Connected);
+    }
+
+    #[test]
+    fn test_connection_state_is_connected_pattern() {
+        // Only Connected and Authenticated are considered "is_connected"
+        assert!(matches!(
+            ConnectionState::Connected,
+            ConnectionState::Connected | ConnectionState::Authenticated
+        ));
+        assert!(matches!(
+            ConnectionState::Authenticated,
+            ConnectionState::Connected | ConnectionState::Authenticated
+        ));
+        assert!(!matches!(
+            ConnectionState::Disconnected,
+            ConnectionState::Connected | ConnectionState::Authenticated
+        ));
+        assert!(!matches!(
+            ConnectionState::Connecting,
+            ConnectionState::Connected | ConnectionState::Authenticated
+        ));
+        assert!(!matches!(
+            ConnectionState::Closing,
+            ConnectionState::Connected | ConnectionState::Authenticated
+        ));
+    }
+
+    #[test]
+    fn test_connection_state_equality() {
+        assert_eq!(ConnectionState::Connected, ConnectionState::Connected);
+        assert_ne!(ConnectionState::Connected, ConnectionState::Disconnected);
+        assert_ne!(ConnectionState::Authenticated, ConnectionState::Connected);
+    }
 }
