@@ -920,4 +920,51 @@ mod tests {
 
         assert!(!Arc::ptr_eq(&vf1, &vf3), "different service should be a separate file");
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Auth pre-check guard tests
+    // ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_create_service_not_authenticated_returns_permission_denied() {
+        let client = Client::new("wss://localhost:9999");
+        // No authentication → must fail immediately with PermissionDenied
+        let result = client.create_service("tenant_a", "my_service").await;
+        assert!(
+            result.is_err(),
+            "create_service must fail when not authenticated"
+        );
+        match result.unwrap_err() {
+            crate::error::CommyError::PermissionDenied(_) => {}
+            e => panic!("Expected PermissionDenied, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_service_not_authenticated_returns_permission_denied() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.get_service("tenant_a", "my_service").await;
+        assert!(
+            result.is_err(),
+            "get_service must fail when not authenticated"
+        );
+        match result.unwrap_err() {
+            crate::error::CommyError::PermissionDenied(_) => {}
+            e => panic!("Expected PermissionDenied, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_service_not_authenticated_returns_permission_denied() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.delete_service("tenant_a", "my_service").await;
+        assert!(
+            result.is_err(),
+            "delete_service must fail when not authenticated"
+        );
+        match result.unwrap_err() {
+            crate::error::CommyError::PermissionDenied(_) => {}
+            e => panic!("Expected PermissionDenied, got {:?}", e),
+        }
+    }
 }

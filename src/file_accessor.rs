@@ -239,4 +239,96 @@ mod tests {
         let result = accessor.read_bytes(0, 100).await;
         assert!(result.is_err());
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // LocalFileAccessor tests
+    // ─────────────────────────────────────────────────────────────
+
+    fn make_tmp_file(size: usize) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.mem");
+        std::fs::write(&path, vec![0u8; size]).unwrap();
+        (dir, path)
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_new_and_is_local() {
+        let (_tmp, path) = make_tmp_file(64);
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        assert!(accessor.is_local());
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_file_size() {
+        let (_tmp, path) = make_tmp_file(128);
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let size = accessor.file_size().await.unwrap();
+        assert_eq!(size, 128);
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_as_slice() {
+        let content = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        let (_tmp, path) = make_tmp_file(8);
+        // Write known content
+        std::fs::write(&path, &content).unwrap();
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        assert_eq!(accessor.as_slice(), &content[..]);
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_read_bytes_happy() {
+        let content = vec![10u8, 20, 30, 40, 50, 60, 70, 80];
+        let (_tmp, path) = make_tmp_file(8);
+        std::fs::write(&path, &content).unwrap();
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let bytes = accessor.read_bytes(2, 4).await.unwrap();
+        assert_eq!(bytes, vec![30, 40, 50, 60]);
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_read_bytes_out_of_bounds_returns_error() {
+        let (_tmp, path) = make_tmp_file(8);
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let result = accessor.read_bytes(0, 100).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_write_bytes_returns_invalid_state() {
+        let (_tmp, path) = make_tmp_file(16);
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let result = accessor.write_bytes(0, &[1, 2, 3]).await;
+        assert!(
+            result.is_err(),
+            "write_bytes must fail on local read-only accessor"
+        );
+        // Should be an InvalidState error
+        match result.unwrap_err() {
+            crate::error::CommyError::InvalidState(_) => {}
+            e => panic!("Expected InvalidState, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_resize_returns_invalid_state() {
+        let (_tmp, path) = make_tmp_file(16);
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let result = accessor.resize(256).await;
+        assert!(
+            result.is_err(),
+            "resize must fail on local memory-mapped accessor"
+        );
+        match result.unwrap_err() {
+            crate::error::CommyError::InvalidState(_) => {}
+            e => panic!("Expected InvalidState, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_path() {
+        let (_tmp, path) = make_tmp_file(32);
+        let accessor = LocalFileAccessor::new(path.clone().into()).await.unwrap();
+        assert_eq!(accessor.path(), &std::path::PathBuf::from(&path));
+    }
 }
