@@ -9,7 +9,7 @@
 //! Note: These tests use mock/local testing without actual WebSocket server.
 //! For full integration with real server, see server integration tests.
 
-use commy_client::message::{ClientMessage, ServerMessage};
+use commy_sdk_rust::message::{ClientMessage, ServerMessage};
 
 #[tokio::test]
 async fn test_crud_permissions_flow() {
@@ -55,7 +55,7 @@ async fn test_crud_permissions_flow() {
 #[tokio::test]
 async fn test_create_service_message_format() {
     // Test that the CreateService message is formatted correctly
-    use commy_client::message::ClientMessage;
+    use commy_sdk_rust::message::ClientMessage;
 
     let msg = ClientMessage::CreateService {
         tenant_id: "org_a".to_string(),
@@ -78,7 +78,7 @@ async fn test_create_service_message_format() {
 #[tokio::test]
 async fn test_get_service_message_format() {
     // Test that the GetService message is formatted correctly
-    use commy_client::message::ClientMessage;
+    use commy_sdk_rust::message::ClientMessage;
 
     let msg = ClientMessage::GetService {
         tenant_id: "org_a".to_string(),
@@ -101,7 +101,7 @@ async fn test_get_service_message_format() {
 #[tokio::test]
 async fn test_delete_service_message_format() {
     // Test that the DeleteService message is formatted correctly
-    use commy_client::message::ClientMessage;
+    use commy_sdk_rust::message::ClientMessage;
 
     let msg = ClientMessage::DeleteService {
         tenant_id: "org_a".to_string(),
@@ -124,7 +124,7 @@ async fn test_delete_service_message_format() {
 #[tokio::test]
 async fn test_error_code_variants() {
     // Test that all error codes are properly defined
-    use commy_client::message::ErrorCode;
+    use commy_sdk_rust::message::ErrorCode;
 
     println!("Available Error Codes:");
     println!("  - NotFound: Resource doesn't exist");
@@ -180,7 +180,7 @@ async fn test_service_response_message() {
 #[tokio::test]
 async fn test_error_response_message() {
     // Test that Error response message is formatted correctly
-    use commy_client::message::{ErrorCode, ServerMessage};
+    use commy_sdk_rust::message::{ErrorCode, ServerMessage};
 
     let msg = ServerMessage::Error {
         code: ErrorCode::NotFound,
@@ -203,7 +203,7 @@ async fn test_error_response_message() {
 #[tokio::test]
 async fn test_create_service_idempotency_handling() {
     // Test showing how clients should handle AlreadyExists error
-    use commy_client::message::ErrorCode;
+    use commy_sdk_rust::message::ErrorCode;
 
     println!("Create Service Idempotency Pattern:");
     println!("==================================\n");
@@ -300,7 +300,7 @@ async fn test_client_lifecycle() {
 #[tokio::test]
 async fn test_error_handling_patterns() {
     // Document error handling patterns
-    use commy_client::CommyError;
+    use commy_sdk_rust::CommyError;
 
     println!("Error Handling Patterns for CRUD:");
     println!("=================================\n");
@@ -368,7 +368,7 @@ async fn test_concurrent_operations() {
 #[test]
 fn test_message_serialization_round_trip() {
     // Test that messages can be serialized and deserialized
-    use commy_client::message::ClientMessage;
+    use commy_sdk_rust::message::ClientMessage;
 
     let original = ClientMessage::CreateService {
         tenant_id: "org_a".to_string(),

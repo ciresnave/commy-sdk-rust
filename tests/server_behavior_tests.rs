@@ -3,7 +3,7 @@
 //! These tests validate the expected server behavior when handling CRUD operations.
 //! They test the message protocol and error handling without requiring a live connection.
 
-use commy_client::message::{ClientMessage, ErrorCode, ServerMessage};
+use commy_sdk_rust::message::{ClientMessage, ErrorCode, ServerMessage};
 
 #[test]
 fn test_server_response_format_service_created() {
