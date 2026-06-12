@@ -1242,4 +1242,413 @@ mod tests {
              Expected at most 1 success."
         );
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // "Not connected" early-return tests
+    // Uses start_paused = true so the 1-second reconnect delay is instant.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test(start_paused = true)]
+    async fn test_read_variable_when_disconnected_returns_connection_lost() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.read_variable("svc_id", "var_name").await;
+        assert!(result.is_err(), "read_variable with no connection must fail");
+        assert!(
+            matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
+            "Expected ConnectionLost"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_write_variable_when_disconnected_returns_connection_lost() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.write_variable("svc_id", "var_name", vec![1, 2, 3]).await;
+        assert!(result.is_err(), "write_variable with no connection must fail");
+        assert!(
+            matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
+            "Expected ConnectionLost"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_subscribe_when_disconnected_returns_connection_lost() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.subscribe("svc_id", "var_name").await;
+        assert!(result.is_err(), "subscribe with no connection must fail");
+        assert!(
+            matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
+            "Expected ConnectionLost"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_heartbeat_when_disconnected_returns_connection_lost() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.heartbeat().await;
+        assert!(result.is_err(), "heartbeat with no connection must fail");
+        assert!(
+            matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
+            "Expected ConnectionLost"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // create_tenant / delete_tenant error response paths
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_create_tenant_success_false_returns_permission_denied() {
+        let (client, _client_rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::TenantResult {
+                success: false,
+                tenant_id: "t1".to_string(),
+                message: "not allowed".to_string(),
+            },
+        )
+        .await;
+        let result = client.create_tenant("t1", "Tenant One").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::PermissionDenied(_) => {}
+            e => panic!("Expected PermissionDenied, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_error_response_returns_unauthorized() {
+        let (client, _client_rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Error {
+                code: crate::message::ErrorCode::Unauthorized,
+                message: "invalid credentials".to_string(),
+            },
+        )
+        .await;
+        let result = client.create_tenant("t1", "Tenant One").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::Unauthorized(_) => {}
+            CommyError::Timeout => panic!("Bug: Error{{Unauthorized}} was silently converted to Timeout"),
+            e => panic!("Expected Unauthorized, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_tenant_success_false_returns_permission_denied() {
+        let (client, _client_rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Result {
+                request_id: "r1".to_string(),
+                success: false,
+                message: "not allowed to delete".to_string(),
+            },
+        )
+        .await;
+        let result = client.delete_tenant("t1").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::PermissionDenied(_) => {}
+            e => panic!("Expected PermissionDenied, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_tenant_error_not_found_returns_not_found() {
+        let (client, _client_rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Error {
+                code: crate::message::ErrorCode::NotFound,
+                message: "tenant does not exist".to_string(),
+            },
+        )
+        .await;
+        let result = client.delete_tenant("t1").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::NotFound(_) => {}
+            CommyError::Timeout => panic!("Bug: Error{{NotFound}} converted to Timeout"),
+            e => panic!("Expected NotFound, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_variable_error_not_found_returns_not_found() {
+        let (client, _client_rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Error {
+                code: crate::message::ErrorCode::NotFound,
+                message: "variable does not exist".to_string(),
+            },
+        )
+        .await;
+        let result = client.read_variable("svc_1", "var_x").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommyError::NotFound(_) => {}
+            CommyError::Timeout => panic!("Bug: Error{{NotFound}} converted to Timeout"),
+            e => panic!("Expected NotFound, got {:?}", e),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // authenticate success \u2192 state transitions
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_authenticate_success_transitions_to_authenticated_state() {
+        let client = Client::new("wss://test");
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        // Pre-load a successful AuthenticationResult
+        server_tx
+            .send(crate::message::ServerMessage::AuthenticationResult {
+                success: true,
+                message: "Welcome".to_string(),
+                server_version: "1.0.0".to_string(),
+                permissions: Some(vec!["read".to_string(), "write".to_string()]),
+            })
+            .expect("pre-send");
+        client.inject_connection_for_test(conn).await;
+
+        let creds = crate::message::AuthCredentials::ApiKey {
+            key: "test-key".to_string(),
+        };
+        let result = client.authenticate("tenant_a", creds).await;
+        assert!(result.is_ok(), "authenticate must succeed: {:?}", result);
+
+        // State must be Authenticated
+        assert_eq!(
+            client.connection_state().await,
+            crate::connection::ConnectionState::Authenticated,
+            "connection_state must be Authenticated after successful authenticate()"
+        );
+
+        // Tenant must be in the list
+        assert!(
+            client.is_authenticated_to("tenant_a").await,
+            "is_authenticated_to must return true for the authenticated tenant"
+        );
+        assert!(
+            client.authenticated_tenants().await.contains(&"tenant_a".to_string()),
+            "authenticated_tenants() must list the tenant"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helper: inject a connection with no pre-loaded response.
+    // Useful for write_variable / subscribe / unsubscribe / heartbeat, which
+    // either don't wait for a response or handle a missing response gracefully.
+    // ─────────────────────────────────────────────────────────────────────────
+    async fn client_with_injected_connection()
+    -> (Client, tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>)
+    {
+        let client = Client::new("wss://test");
+        let (conn, _server_tx, client_rx) = crate::connection::Connection::new_for_test();
+        // _server_tx dropped intentionally: these tests never pre-load a response.
+        // conn.recv() returns None (channel closed), which heartbeat handles gracefully.
+        client.inject_connection_for_test(conn).await;
+        (client, client_rx)
+    }
+
+    // ── write_variable / subscribe / unsubscribe success ─────────────────────
+
+    #[tokio::test]
+    async fn test_write_variable_with_connection_succeeds() {
+        let (client, _rx) = client_with_injected_connection().await;
+        let result = client.write_variable("svc_1", "temp", vec![1, 2, 3, 4]).await;
+        assert!(result.is_ok(), "write_variable with connection must return Ok: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_with_connection_succeeds() {
+        let (client, _rx) = client_with_injected_connection().await;
+        let result = client.subscribe("svc_1", "temp").await;
+        assert!(result.is_ok(), "subscribe with connection must return Ok: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_unsubscribe_with_connection_succeeds() {
+        let (client, _rx) = client_with_injected_connection().await;
+        let result = client.unsubscribe("svc_1", "temp").await;
+        assert!(result.is_ok(), "unsubscribe with connection must return Ok: {:?}", result);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_unsubscribe_when_disconnected_returns_connection_lost() {
+        let client = Client::new("wss://localhost:9999");
+        let result = client.unsubscribe("svc_1", "temp").await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
+            "Expected ConnectionLost"
+        );
+    }
+
+    // ── heartbeat success ─────────────────────────────────────────────────────
+
+    #[tokio::test(start_paused = true)]
+    async fn test_heartbeat_with_connection_returns_ok() {
+        // heartbeat() calls send_message then waits up to 10 s for a reply.
+        // The mock channel has no response pre-loaded, so conn.recv() returns
+        // None (closed channel). heartbeat() handles this gracefully and still
+        // returns Ok(()).  start_paused makes the 10-s timeout instant.
+        let (client, _rx) = client_with_injected_connection().await;
+        let result = client.heartbeat().await;
+        assert!(result.is_ok(), "heartbeat with connection must return Ok: {:?}", result);
+    }
+
+    // ── success paths for methods that wait for a server response ─────────────
+
+    #[tokio::test]
+    async fn test_read_variable_success_returns_bytes() {
+        let expected = vec![10u8, 20, 30, 40];
+        let (client, _rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::VariableData {
+                service_id: "svc_1".to_string(),
+                variable_name: "temp".to_string(),
+                data: expected.clone(),
+                version: 1,
+            },
+        )
+        .await;
+        let result = client.read_variable("svc_1", "temp").await;
+        assert!(result.is_ok(), "read_variable must succeed: {:?}", result);
+        assert_eq!(result.unwrap(), expected, "returned bytes must match pre-loaded data");
+    }
+
+    #[tokio::test]
+    async fn test_create_service_success_returns_id() {
+        let (client, _rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Service {
+                service_id: "svc-abc-123".to_string(),
+                service_name: "my_service".to_string(),
+                tenant_id: "tenant_x".to_string(),
+                file_path: None,
+            },
+        )
+        .await;
+        let result = client.create_service("tenant_x", "my_service").await;
+        assert!(result.is_ok(), "create_service must succeed: {:?}", result);
+        assert_eq!(result.unwrap(), "svc-abc-123");
+    }
+
+    #[tokio::test]
+    async fn test_get_service_success_returns_service() {
+        let (client, _rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Service {
+                service_id: "svc-xyz".to_string(),
+                service_name: "config".to_string(),
+                tenant_id: "tenant_x".to_string(),
+                file_path: Some("/data/svc.mem".to_string()),
+            },
+        )
+        .await;
+        let result = client.get_service("tenant_x", "config").await;
+        assert!(result.is_ok(), "get_service must succeed: {:?}", result);
+        let svc = result.unwrap();
+        assert_eq!(svc.id, "svc-xyz");
+        assert_eq!(svc.name, "config");
+        assert_eq!(svc.tenant_id, "tenant_x");
+        assert_eq!(svc.file_path(), Some("/data/svc.mem"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_service_success_returns_ok() {
+        let (client, _rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Result {
+                request_id: "r1".to_string(),
+                success: true,
+                message: "deleted".to_string(),
+            },
+        )
+        .await;
+        let result = client.delete_service("tenant_x", "old_svc").await;
+        assert!(result.is_ok(), "delete_service must succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_success_returns_tenant_id() {
+        let (client, _rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::TenantResult {
+                success: true,
+                tenant_id: "new_tenant".to_string(),
+                message: "created".to_string(),
+            },
+        )
+        .await;
+        let result = client.create_tenant("new_tenant", "New Tenant").await;
+        assert!(result.is_ok(), "create_tenant must succeed: {:?}", result);
+        assert_eq!(result.unwrap(), "new_tenant");
+    }
+
+    #[tokio::test]
+    async fn test_delete_tenant_success_returns_ok() {
+        let (client, _rx) = setup_client_with_mock_response(
+            "tenant_x",
+            crate::message::ServerMessage::Result {
+                request_id: "r1".to_string(),
+                success: true,
+                message: "tenant deleted".to_string(),
+            },
+        )
+        .await;
+        let result = client.delete_tenant("old_tenant").await;
+        assert!(result.is_ok(), "delete_tenant must succeed: {:?}", result);
+    }
+
+    // ── outgoing message field verification ───────────────────────────────────
+
+    #[tokio::test]
+    async fn test_write_variable_sends_correct_message_fields() {
+        use crate::message::ClientMessage;
+        let (client, mut client_rx) = client_with_injected_connection().await;
+        client
+            .write_variable("svc_xyz", "temperature", vec![42u8, 43u8, 44u8])
+            .await
+            .unwrap();
+        let sent = client_rx.try_recv().expect("write_variable must enqueue a ClientMessage");
+        match sent {
+            ClientMessage::WriteVariable { service_id, variable_name, data } => {
+                assert_eq!(service_id, "svc_xyz", "service_id mismatch");
+                assert_eq!(variable_name, "temperature", "variable_name mismatch");
+                assert_eq!(data, vec![42u8, 43u8, 44u8], "data mismatch");
+            }
+            other => panic!("Expected WriteVariable, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_sends_correct_message_fields() {
+        use crate::message::ClientMessage;
+        let (client, mut client_rx) = client_with_injected_connection().await;
+        client.subscribe("svc_xyz", "pressure").await.unwrap();
+        let sent = client_rx.try_recv().expect("subscribe must enqueue a ClientMessage");
+        match sent {
+            ClientMessage::Subscribe { service_id, variable_name } => {
+                assert_eq!(service_id, "svc_xyz", "service_id mismatch");
+                assert_eq!(variable_name, "pressure", "variable_name mismatch");
+            }
+            other => panic!("Expected Subscribe, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unsubscribe_sends_correct_message_fields() {
+        use crate::message::ClientMessage;
+        let (client, mut client_rx) = client_with_injected_connection().await;
+        client.unsubscribe("svc_xyz", "pressure").await.unwrap();
+        let sent = client_rx.try_recv().expect("unsubscribe must enqueue a ClientMessage");
+        match sent {
+            ClientMessage::Unsubscribe { service_id, variable_name } => {
+                assert_eq!(service_id, "svc_xyz", "service_id mismatch");
+                assert_eq!(variable_name, "pressure", "variable_name mismatch");
+            }
+            other => panic!("Expected Unsubscribe, got {:?}", other),
+        }
+    }
 }

@@ -574,6 +574,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_variables_empty_returns_empty_vec() {
+        let vf = VirtualVariableFile::new(
+            "svc_empty".to_string(),
+            "cfg".to_string(),
+            "t1".to_string(),
+        );
+        let list = vf.list_variables().await.unwrap();
+        assert!(
+            list.is_empty(),
+            "Freshly created VirtualVariableFile must have no variables, got {:?}",
+            list
+        );
+    }
+
+    #[tokio::test]
     async fn test_list_variables() {
         let vf = VirtualVariableFile::new(
             "svc".to_string(),

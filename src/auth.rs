@@ -156,4 +156,25 @@ mod tests {
         let long_token = "x".repeat(10001);
         assert!(validate_token_format(&long_token).is_err());
     }
+
+    #[test]
+    fn test_validate_token_exactly_at_limit_is_ok() {
+        // 10000 chars is exactly the limit and should succeed (> 10000 fails)
+        let token = "a".repeat(10000);
+        assert!(
+            validate_token_format(&token).is_ok(),
+            "Token of exactly 10000 chars must be valid"
+        );
+    }
+
+    #[test]
+    fn test_auth_context_empty_permissions_has_no_permission() {
+        let ctx = AuthContext::new("t".to_string(), vec![]);
+        assert!(
+            !ctx.has_permission("read"),
+            "AuthContext with no permissions must return false for has_permission(\"read\")"
+        );
+        assert!(!ctx.has_permission("write"));
+        assert!(!ctx.has_permission("admin"));
+    }
 }

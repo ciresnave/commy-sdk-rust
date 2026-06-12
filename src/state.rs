@@ -219,4 +219,38 @@ mod tests {
         let state = shared.try_read().unwrap();
         assert_eq!(state.client_id, "my_client");
     }
+
+    #[test]
+    fn test_reset_clears_services() {
+        let mut state = ClientState::new("cli".to_string());
+        let svc = crate::service::Service::new(
+            "svc_1".to_string(),
+            "my_svc".to_string(),
+            "tenant_a".to_string(),
+            None,
+        );
+        state.services.register(svc);
+        assert_eq!(state.services.len(), 1, "precondition: service must be registered");
+
+        state.reset();
+        assert_eq!(
+            state.services.len(), 0,
+            "reset() must clear the service registry"
+        );
+    }
+
+    #[test]
+    fn test_server_version_persists_after_reset() {
+        // server_version is currently NOT cleared by reset() — this test documents
+        // that (intentional or not) so any future change is caught.
+        let mut state = ClientState::new("cli".to_string());
+        state.server_version = Some("1.2.3".to_string());
+        state.reset();
+        // server_version is not cleared by reset; document current behavior:
+        assert_eq!(
+            state.server_version,
+            Some("1.2.3".to_string()),
+            "reset() does not clear server_version (current behavior)"
+        );
+    }
 }

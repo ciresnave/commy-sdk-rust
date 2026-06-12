@@ -433,4 +433,66 @@ mod tests {
             "Unregistered .mem file must not emit a FileChangeEvent"
         );
     }
+
+    /// When a registered service .mem file changes, `handle_file_change` must
+    /// detect the diff and emit a `FileChangeEvent` on the channel.
+    #[tokio::test]
+    async fn test_handle_file_change_registered_service_emits_event() {
+        use std::path::PathBuf;
+        use std::sync::Arc;
+        use tokio::sync::mpsc;
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
+        use crate::virtual_file::{VirtualVariableFile, VariableMetadata};
+
+        let dir = tempfile::tempdir().unwrap();
+        let service_id = "evt_test_svc";
+        let file_path: PathBuf = dir.path().join(format!("service_{}.mem", service_id));
+
+        // Initial (shadow) bytes and changed bytes — same length, different content
+        let initial_bytes = vec![0u8, 0u8, 0u8, 0u8];
+        let changed_bytes = vec![1u8, 2u8, 3u8, 4u8];
+
+        // Write the changed bytes to disk (what the FS watcher would give us)
+        std::fs::write(&file_path, &changed_bytes).unwrap();
+
+        // Create a VirtualVariableFile for this service and set up shadow matching initial state
+        let vf = Arc::new(VirtualVariableFile::new(
+            service_id.to_string(),
+            "evt_service".to_string(),
+            "evt_tenant".to_string(),
+        ));
+
+        // Register one variable covering bytes 0..4
+        let meta = VariableMetadata::new("counter".to_string(), 0, 4, 0);
+        vf.register_variable(meta).await.unwrap();
+
+        // Shadow = initial bytes (different from what is on disk)
+        vf.update_shadow_bytes(initial_bytes.clone()).await.unwrap();
+        // Current bytes also initialised so that update_bytes won't misfire
+        vf.update_bytes(initial_bytes.clone()).await.unwrap();
+
+        // Build the virtual_files map with this entry
+        let mut map: HashMap<String, Arc<VirtualVariableFile>> = HashMap::new();
+        map.insert(service_id.to_string(), vf);
+        let virtual_files = Arc::new(RwLock::new(map));
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<FileChangeEvent>();
+
+        let result = VariableFileWatcher::handle_file_change(
+            &file_path,
+            &tx,
+            &virtual_files,
+        )
+        .await;
+
+        assert!(result.is_ok(), "handle_file_change should succeed: {:?}", result);
+
+        let event = rx.try_recv().expect("A FileChangeEvent should have been emitted");
+        assert_eq!(event.service_id, service_id, "service_id mismatch");
+        assert!(
+            !event.changed_variables.is_empty() || !event.byte_ranges.is_empty(),
+            "At least one change should be reported"
+        );
+    }
 }

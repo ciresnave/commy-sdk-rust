@@ -175,4 +175,36 @@ mod tests {
         assert!(matches!(commy_err, CommyError::WebSocketError(_)));
         assert!(commy_err.to_string().contains("WebSocket error"));
     }
+
+    #[test]
+    fn test_from_rmp_serde_encode_error() {
+        // Build an encode error via a custom Serialize impl that always rejects
+        struct AlwaysFails;
+        impl serde::Serialize for AlwaysFails {
+            fn serialize<S: serde::Serializer>(&self, _: S)
+                -> std::result::Result<S::Ok, S::Error>
+            {
+                Err(<S::Error as serde::ser::Error>::custom("intentional test failure"))
+            }
+        }
+        let raw = rmp_serde::to_vec(&AlwaysFails).unwrap_err();
+        let commy_err = CommyError::from(raw);
+        assert!(
+            matches!(commy_err, CommyError::MessagePackError(_)),
+            "rmp_serde encode error must map to CommyError::MessagePackError"
+        );
+    }
+
+    #[test]
+    fn test_from_rmp_serde_decode_error() {
+        // Decode error: try to deserialize invalid msgpack bytes
+        let bad_bytes = b"\xff\xfe\xfd"; // invalid msgpack
+        let raw = rmp_serde::from_slice::<u32>(bad_bytes);
+        let decode_err = raw.unwrap_err();
+        let commy_err = CommyError::from(decode_err);
+        assert!(
+            matches!(commy_err, CommyError::MessagePackDecodeError(_)),
+            "rmp_serde decode error must map to CommyError::MessagePackDecodeError"
+        );
+    }
 }

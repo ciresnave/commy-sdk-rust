@@ -331,4 +331,34 @@ mod tests {
         let accessor = LocalFileAccessor::new(path.clone().into()).await.unwrap();
         assert_eq!(accessor.path(), &std::path::PathBuf::from(&path));
     }
+
+    #[tokio::test]
+    async fn test_remote_write_bytes_beyond_current_len_zero_fills_gap() {
+        // Start with an 4-byte buffer, then write 2 bytes at offset 8.
+        // The buffer should grow to 10 bytes with 0s in [4..8].
+        let accessor = RemoteFileAccessor::new();
+        accessor.update_buffer(vec![1, 2, 3, 4]).await.unwrap();
+
+        accessor.write_bytes(8, &[77, 88]).await.unwrap();
+
+        let buf = accessor.get_buffer().await;
+        assert_eq!(buf.len(), 10);
+        // Original bytes preserved
+        assert_eq!(&buf[0..4], &[1, 2, 3, 4]);
+        // Gap is zero-filled
+        assert_eq!(&buf[4..8], &[0, 0, 0, 0]);
+        // Written bytes are present
+        assert_eq!(&buf[8..10], &[77, 88]);
+    }
+
+    #[tokio::test]
+    async fn test_local_accessor_read_bytes_exact_boundary_succeeds() {
+        // An 8-byte file: reading offset=4, size=4 ends exactly at the last byte \u2014 must succeed
+        let content = vec![10u8, 20, 30, 40, 50, 60, 70, 80];
+        let (_tmp, path) = make_tmp_file(8);
+        std::fs::write(&path, &content).unwrap();
+        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let bytes = accessor.read_bytes(4, 4).await.unwrap();
+        assert_eq!(bytes, vec![50, 60, 70, 80], "read at exact boundary must return last 4 bytes");
+    }
 }

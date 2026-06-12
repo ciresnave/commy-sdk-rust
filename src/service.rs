@@ -319,4 +319,68 @@ mod tests {
         ));
         assert_eq!(manager.len(), 2);
     }
+
+    #[test]
+    fn test_service_manager_register_duplicate_id_overwrites() {
+        let mut manager = ServiceManager::new();
+        manager.register(Service::new(
+            "dup_id".to_string(),
+            "first_name".to_string(),
+            "t1".to_string(),
+            None,
+        ));
+        manager.register(Service::new(
+            "dup_id".to_string(),
+            "second_name".to_string(),
+            "t1".to_string(),
+            None,
+        ));
+        assert_eq!(manager.len(), 1, "duplicate register must overwrite, not grow");
+        assert_eq!(
+            manager.get("dup_id").unwrap().name(),
+            "second_name",
+            "second register must replace first for same id"
+        );
+    }
+
+    #[test]
+    fn test_service_manager_get_mut_unknown_id_returns_none() {
+        let mut manager = ServiceManager::new();
+        assert!(
+            manager.get_mut("does-not-exist").is_none(),
+            "get_mut on unknown id must return None"
+        );
+    }
+
+    #[test]
+    fn test_service_add_variable_duplicate_name_last_wins() {
+        let mut svc = Service::new(
+            "s".to_string(), "n".to_string(), "t".to_string(), None,
+        );
+        let meta1 = crate::message::VariableMetadata {
+            name: "my_var".to_string(),
+            service_id: "s".to_string(),
+            offset: 0,
+            size: 4,
+            version: 1,
+            created_at: chrono::Utc::now(),
+        };
+        let meta2 = crate::message::VariableMetadata {
+            name: "my_var".to_string(),
+            service_id: "s".to_string(),
+            offset: 0,
+            size: 8,
+            version: 2,
+            created_at: chrono::Utc::now(),
+        };
+        svc.add_variable(meta1);
+        svc.add_variable(meta2);
+        // Duplicate name → second wins; map must still have only 1 entry
+        assert_eq!(svc.variables().len(), 1);
+        assert_eq!(
+            svc.get_variable("my_var").unwrap().size,
+            8,
+            "second add_variable must overwrite first for same name"
+        );
+    }
 }

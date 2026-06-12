@@ -718,4 +718,77 @@ mod tests {
             _ => panic!("Wrong variant"),
         }
     }
+
+    #[test]
+    fn test_server_message_result_round_trip() {
+        let msg = ServerMessage::Result {
+            request_id: "req-42".to_string(),
+            success: true,
+            message: "Operation completed".to_string(),
+        };
+        match round_trip_server(msg) {
+            ServerMessage::Result { request_id, success, message } => {
+                assert_eq!(request_id, "req-42");
+                assert!(success);
+                assert_eq!(message, "Operation completed");
+            }
+            _ => panic!("Wrong variant after round-trip"),
+        }
+    }
+
+    #[test]
+    fn test_service_metadata_round_trip_with_and_without_file_path() {
+        // With file_path = Some
+        let with_path = ServiceMetadata {
+            service_id: "svc-1".to_string(),
+            service_name: "my_service".to_string(),
+            tenant_id: "tenant_a".to_string(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            file_path: Some("/tmp/svc.mem".to_string()),
+        };
+        let json = serde_json::to_string(&with_path).unwrap();
+        let back: ServiceMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.service_id, "svc-1");
+        assert_eq!(back.file_path, Some("/tmp/svc.mem".to_string()));
+
+        // With file_path = None
+        let no_path = ServiceMetadata {
+            service_id: "svc-2".to_string(),
+            service_name: "remote_service".to_string(),
+            tenant_id: "tenant_b".to_string(),
+            created_at: chrono::Utc::now(),
+            file_path: None,
+        };
+        let json = serde_json::to_string(&no_path).unwrap();
+        let back: ServiceMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.service_id, "svc-2");
+        assert!(back.file_path.is_none());
+    }
+
+    #[test]
+    fn test_permission_enum_all_variants_round_trip() {
+        let variants = [
+            Permission::Read,
+            Permission::Write,
+            Permission::Admin,
+            Permission::Execute,
+        ];
+        for perm in &variants {
+            let json = serde_json::to_string(perm).unwrap();
+            let back: Permission = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, perm, "Permission round-trip failed for {:?}", perm);
+        }
+    }
+
+    #[test]
+    fn test_unknown_server_message_type_tag_fails_to_deserialize() {
+        let bad_json = r#"{"type":"SomeFutureMessageType","data":{"key":"value"}}"#;
+        let result: Result<ServerMessage, _> = serde_json::from_str(bad_json);
+        assert!(
+            result.is_err(),
+            "Deserializing unknown 'type' tag must fail, not silently produce a wrong variant"
+        );
+    }
 }

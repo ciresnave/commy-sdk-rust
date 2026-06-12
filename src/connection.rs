@@ -172,4 +172,59 @@ mod tests {
         assert_ne!(ConnectionState::Connected, ConnectionState::Disconnected);
         assert_ne!(ConnectionState::Authenticated, ConnectionState::Connected);
     }
+
+    #[tokio::test]
+    async fn test_send_enqueues_message_on_client_rx() {
+        use crate::message::ClientMessage;
+
+        let (conn, _server_tx, mut client_rx) = Connection::new_for_test();
+
+        conn.send(ClientMessage::Heartbeat {
+            client_id: "test_client".to_string(),
+        })
+        .await
+        .expect("send should succeed");
+
+        let received = client_rx.try_recv().expect("message should be in channel");
+        assert!(
+            matches!(received, ClientMessage::Heartbeat { .. }),
+            "Expected Heartbeat, got {:?}",
+            received
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recv_returns_pre_loaded_server_message() {
+        use crate::message::ServerMessage;
+
+        let (conn, server_tx, _client_rx) = Connection::new_for_test();
+
+        server_tx
+            .send(ServerMessage::Heartbeat {
+                timestamp: "2025-01-01T00:00:00Z".to_string(),
+            })
+            .expect("pre-loading message should succeed");
+
+        let result = conn.recv().await.expect("recv should not error");
+        assert!(
+            matches!(result, Some(ServerMessage::Heartbeat { .. })),
+            "Expected Heartbeat ServerMessage, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recv_on_closed_channel_returns_ok_none() {
+        let (conn, server_tx, _client_rx) = Connection::new_for_test();
+
+        // Drop the send half — channel is now closed from the server side
+        drop(server_tx);
+
+        let result = conn.recv().await.expect("recv should not error even when channel closed");
+        assert!(
+            result.is_none(),
+            "Closed channel should return Ok(None), got {:?}",
+            result
+        );
+    }
 }
