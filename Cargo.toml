@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.89"
 name = "commy-sdk-rust"
-version = "0.2.4"
+version = "0.3.0"
 authors = ["Commy Contributors"]
 build = false
 autolib = false
@@ -69,6 +69,9 @@ path = "tests/tenant_crud_tests.rs"
 [[test]]
 name = "tenant_server_behavior_tests"
 path = "tests/tenant_server_behavior_tests.rs"
+
+[dependencies]
+commy-wire = "0.2.1"
 
 [dependencies.async-trait]
 version = "0.1"

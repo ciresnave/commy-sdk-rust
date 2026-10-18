@@ -3,6 +3,7 @@
 use crate::auth::{AuthContext, AuthCredentials};
 use crate::connection::{Connection, ConnectionState};
 use crate::error::{CommyError, Result};
+use crate::local_map::{LocalMap, LocalMapOutcome, NegotiatedFile};
 use crate::message::{ClientMessage, ServerMessage};
 use crate::service::Service;
 use crate::state::{create_shared_state, SharedState};
@@ -615,6 +616,96 @@ impl Client {
             Err(CommyError::ConnectionLost(
                 "Connection not established".to_string(),
             ))
+        }
+    }
+
+    /// Ask the server whether `service_id` may be mapped locally and, if it is offered and the
+    /// nonce checks out, return the confirmed mapping. Any failure after the offer (unopenable
+    /// file, bad nonce file, no ack) returns `local: None`: the caller stays on WSS ranges.
+    ///
+    /// While waiting, messages that do not carry this call's `request_id` are discarded.
+    pub async fn negotiate_local(&self, service_id: &str) -> Result<NegotiatedFile> {
+        self.negotiate_local_with_timeout(service_id, Duration::from_secs(10))
+            .await
+    }
+
+    async fn negotiate_local_with_timeout(
+        &self,
+        service_id: &str,
+        wait: Duration,
+    ) -> Result<NegotiatedFile> {
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection lost during negotiate_local".to_string(),
+            ));
+        };
+
+        let request_id = Uuid::new_v4().to_string();
+        conn.send(ClientMessage::GetServiceFilePath(
+            commy_wire::GetServiceFilePath {
+                request_id: request_id.clone(),
+                service_id: service_id.to_string(),
+            },
+        ))
+        .await?;
+
+        let deadline = tokio::time::Instant::now() + wait;
+        let offer = loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::ServiceFilePath(o)))) if o.request_id == request_id => {
+                    break o
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                    return Err(CommyError::from(code))
+                }
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during negotiate_local".to_string(),
+                    ))
+                }
+                Err(_) => return Err(CommyError::Timeout),
+            }
+        };
+
+        let stay_on_wss = NegotiatedFile {
+            file_id: offer.file_id,
+            local: None,
+        };
+        let map = match LocalMap::from_offer(
+            offer.path.as_deref().map(std::path::Path::new),
+            offer.nonce_path.as_deref().map(std::path::Path::new),
+        ) {
+            LocalMapOutcome::Local(m) => *m,
+            LocalMapOutcome::Fallback(_) => return Ok(stay_on_wss),
+        };
+
+        let confirm_id = Uuid::new_v4().to_string();
+        conn.send(ClientMessage::ConfirmLocal(commy_wire::ConfirmLocal {
+            request_id: confirm_id.clone(),
+            file_id: offer.file_id,
+            nonce: map.nonce().expose().clone(),
+        }))
+        .await?;
+
+        loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::ConfirmLocalAck(a)))) if a.request_id == confirm_id => {
+                    return Ok(NegotiatedFile {
+                        file_id: offer.file_id,
+                        local: Some(map),
+                    })
+                }
+                // A refusal (wrong nonce, rate limit) or silence: stay on WSS ranges.
+                Ok(Ok(Some(ServerMessage::Error { .. }))) | Err(_) => return Ok(stay_on_wss),
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during negotiate_local".to_string(),
+                    ))
+                }
+            }
         }
     }
 
@@ -1749,5 +1840,226 @@ mod tests {
             }
             other => panic!("Expected Unsubscribe, got {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod negotiate_tests {
+    use super::*;
+    use crate::message::{ClientMessage, ServerMessage};
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+    struct Rig {
+        client: Client,
+        to_client: UnboundedSender<ServerMessage>,
+        from_client: UnboundedReceiver<ClientMessage>,
+    }
+
+    async fn rig() -> Rig {
+        let (conn, to_client, from_client) = Connection::new_for_test();
+        let client = Client::new("wss://localhost:9000");
+        client.inject_connection_for_test(conn).await;
+        Rig {
+            client,
+            to_client,
+            from_client,
+        }
+    }
+
+    fn offer(rid: &str, path: Option<&str>, nonce_path: Option<&str>) -> ServerMessage {
+        ServerMessage::ServiceFilePath(commy_wire::ServiceFilePath {
+            request_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            file_id: 9,
+            path: path.map(str::to_string),
+            nonce_path: nonce_path.map(str::to_string),
+        })
+    }
+
+    fn files(dir: &std::path::Path) -> (String, String) {
+        let svc = dir.join("svc.bin");
+        let non = dir.join("nonce");
+        std::fs::write(&svc, [0u8; 4096]).unwrap();
+        std::fs::write(&non, "n0nce-value\n").unwrap();
+        (
+            svc.to_string_lossy().into_owned(),
+            non.to_string_lossy().into_owned(),
+        )
+    }
+
+    async fn first_request_id(rx: &mut UnboundedReceiver<ClientMessage>) -> String {
+        match rx.recv().await.unwrap() {
+            ClientMessage::GetServiceFilePath(g) => {
+                assert_eq!(g.service_id, "svc");
+                g.request_id
+            }
+            other => panic!("expected GetServiceFilePath, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_offer_means_wss_with_file_id_and_no_confirm_sent() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local("svc");
+        let drive = async {
+            let rid = first_request_id(&mut from_client).await;
+            to_client.send(offer(&rid, None, None)).unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        let n = res.unwrap();
+        assert_eq!(n.file_id, 9);
+        assert!(n.local.is_none());
+        assert!(from_client.try_recv().is_err(), "no ConfirmLocal expected");
+    }
+
+    #[tokio::test]
+    async fn offer_with_matching_nonce_and_ack_enters_local_mode() {
+        let d = tempfile::tempdir().unwrap();
+        let (svc, non) = files(d.path());
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local("svc");
+        let drive = async {
+            let rid = first_request_id(&mut from_client).await;
+            to_client.send(offer(&rid, Some(&svc), Some(&non))).unwrap();
+            match from_client.recv().await.unwrap() {
+                ClientMessage::ConfirmLocal(c) => {
+                    assert_eq!(c.file_id, 9);
+                    assert_eq!(c.nonce, "n0nce-value");
+                    to_client
+                        .send(ServerMessage::ConfirmLocalAck(
+                            commy_wire::ConfirmLocalAck {
+                                request_id: c.request_id,
+                                file_id: 9,
+                            },
+                        ))
+                        .unwrap();
+                }
+                other => panic!("expected ConfirmLocal, got {other:?}"),
+            }
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        let n = res.unwrap();
+        assert_eq!(n.file_id, 9);
+        assert_eq!(n.local.expect("local mode").len(), 4096);
+    }
+
+    #[tokio::test]
+    async fn error_reply_to_confirm_falls_back_to_wss() {
+        let d = tempfile::tempdir().unwrap();
+        let (svc, non) = files(d.path());
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local("svc");
+        let drive = async {
+            let rid = first_request_id(&mut from_client).await;
+            to_client.send(offer(&rid, Some(&svc), Some(&non))).unwrap();
+            let _confirm = from_client.recv().await.unwrap();
+            to_client
+                .send(ServerMessage::Error {
+                    code: crate::message::ErrorCode::PermissionDenied,
+                    message: "bad nonce".to_string(),
+                })
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        let n = res.unwrap();
+        assert_eq!(n.file_id, 9);
+        assert!(n.local.is_none());
+    }
+
+    #[tokio::test]
+    async fn unopenable_file_falls_back_without_sending_confirm() {
+        let d = tempfile::tempdir().unwrap();
+        let (_svc, non) = files(d.path());
+        let absent = d.path().join("absent.bin").to_string_lossy().into_owned();
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local("svc");
+        let drive = async {
+            let rid = first_request_id(&mut from_client).await;
+            to_client
+                .send(offer(&rid, Some(&absent), Some(&non)))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(res.unwrap().local.is_none());
+        assert!(from_client.try_recv().is_err(), "no ConfirmLocal expected");
+    }
+
+    #[tokio::test]
+    async fn path_without_nonce_path_is_wss() {
+        let d = tempfile::tempdir().unwrap();
+        let (svc, _non) = files(d.path());
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local("svc");
+        let drive = async {
+            let rid = first_request_id(&mut from_client).await;
+            to_client.send(offer(&rid, Some(&svc), None)).unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(res.unwrap().local.is_none());
+        assert!(from_client.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn reply_with_another_request_id_is_not_accepted() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local_with_timeout("svc", Duration::from_millis(200));
+        let drive = async {
+            let _rid = first_request_id(&mut from_client).await;
+            to_client.send(offer("someone-else", None, None)).unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::Timeout)), "{res:?}");
+    }
+
+    #[tokio::test]
+    async fn error_reply_to_the_request_is_an_error() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.negotiate_local("svc");
+        let drive = async {
+            let _rid = first_request_id(&mut from_client).await;
+            to_client
+                .send(ServerMessage::Error {
+                    code: crate::message::ErrorCode::NotFound,
+                    message: "no such service".to_string(),
+                })
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::NotFound(_))), "{res:?}");
+    }
+
+    #[tokio::test]
+    async fn not_connected_is_connection_lost() {
+        let client = Client::new("wss://localhost:9000");
+        let res = client.negotiate_local("svc").await;
+        assert!(matches!(res, Err(CommyError::ConnectionLost(_))), "{res:?}");
     }
 }

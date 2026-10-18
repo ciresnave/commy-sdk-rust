@@ -85,11 +85,11 @@ pub enum ClientMessage {
     /// Disconnect gracefully
     Disconnect { client_id: String },
 
-    /// Request service file path for memory mapping (local clients)
-    GetServiceFilePath {
-        tenant_id: String,
-        service_name: String,
-    },
+    /// Ask whether a service file may be mapped locally (commy-wire local mapping handshake)
+    GetServiceFilePath(commy_wire::GetServiceFilePath),
+
+    /// Echo the nonce read from the offered side file, proving the same filesystem view
+    ConfirmLocal(commy_wire::ConfirmLocal),
 
     /// Notify server of variable changes detected locally
     ReportVariableChanges {
@@ -163,12 +163,11 @@ pub enum ServerMessage {
     /// Server disconnecting
     Disconnected { reason: String },
 
-    /// Service file path response (for local memory mapping)
-    ServiceFilePath {
-        service_id: String,
-        file_path: String,
-        file_size: u64,
-    },
+    /// The file id for range frames, and (when offered) the local path and nonce path
+    ServiceFilePath(commy_wire::ServiceFilePath),
+
+    /// The server accepted the nonce; local mapping is confirmed
+    ConfirmLocalAck(commy_wire::ConfirmLocalAck),
 
     /// Acknowledgment of variable changes
     VariableChangesAcknowledged {
@@ -708,21 +707,29 @@ mod tests {
     }
 
     #[test]
-    fn test_client_message_get_service_file_path_round_trip() {
-        let msg = ClientMessage::GetServiceFilePath {
-            tenant_id: "t1".to_string(),
-            service_name: "cache".to_string(),
+    fn test_client_message_get_service_file_path_matches_commy_wire() {
+        let wire = commy_wire::GetServiceFilePath {
+            request_id: "r1".to_string(),
+            service_id: "svc".to_string(),
         };
-        match round_trip_client(msg) {
-            ClientMessage::GetServiceFilePath {
-                tenant_id,
-                service_name,
-            } => {
-                assert_eq!(tenant_id, "t1");
-                assert_eq!(service_name, "cache");
-            }
-            _ => panic!("Wrong variant"),
-        }
+        let sdk = serde_json::to_value(ClientMessage::GetServiceFilePath(wire.clone())).unwrap();
+        let expect =
+            serde_json::to_value(commy_wire::ControlMessage::GetServiceFilePath(wire)).unwrap();
+        assert_eq!(sdk, expect);
+    }
+
+    #[test]
+    fn test_client_message_confirm_local_matches_commy_wire_and_hides_nonce() {
+        let wire = commy_wire::ConfirmLocal {
+            request_id: "r2".to_string(),
+            file_id: 7,
+            nonce: "s3cret-nonce".to_string(),
+        };
+        let msg = ClientMessage::ConfirmLocal(wire.clone());
+        let sdk = serde_json::to_value(&msg).unwrap();
+        let expect = serde_json::to_value(commy_wire::ControlMessage::ConfirmLocal(wire)).unwrap();
+        assert_eq!(sdk, expect);
+        assert!(!format!("{msg:?}").contains("s3cret-nonce"));
     }
 
     #[test]
@@ -854,23 +861,22 @@ mod tests {
     }
 
     #[test]
-    fn test_server_message_service_file_path_round_trip() {
-        let msg = ServerMessage::ServiceFilePath {
-            service_id: "svc7".to_string(),
-            file_path: "/var/commy/service.mem".to_string(),
-            file_size: 1_048_576,
-        };
-        match round_trip_server(msg) {
-            ServerMessage::ServiceFilePath {
-                service_id,
-                file_path,
-                file_size,
-            } => {
-                assert_eq!(service_id, "svc7");
-                assert_eq!(file_path, "/var/commy/service.mem");
-                assert_eq!(file_size, 1_048_576);
+    fn test_server_message_service_file_path_parses_commy_wire_offers() {
+        let offer = r#"{"type":"ServiceFilePath","data":{"request_id":"r1","service_id":"svc7","file_id":3,"path":"/v/s.mem","nonce_path":"/v/n"}}"#;
+        match serde_json::from_str::<ServerMessage>(offer).unwrap() {
+            ServerMessage::ServiceFilePath(o) => {
+                assert_eq!(o.file_id, 3);
+                assert_eq!(o.path.as_deref(), Some("/v/s.mem"));
+                assert_eq!(o.nonce_path.as_deref(), Some("/v/n"));
             }
-            _ => panic!("Wrong variant"),
+            other => panic!("Wrong variant: {other:?}"),
+        }
+        let none = r#"{"type":"ServiceFilePath","data":{"request_id":"r1","service_id":"svc7","file_id":3}}"#;
+        match serde_json::from_str::<ServerMessage>(none).unwrap() {
+            ServerMessage::ServiceFilePath(o) => {
+                assert!(o.path.is_none() && o.nonce_path.is_none())
+            }
+            other => panic!("Wrong variant: {other:?}"),
         }
     }
 
