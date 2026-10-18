@@ -7,7 +7,21 @@
 use crate::message::Secret;
 use memmap2::MmapMut;
 use std::fs::OpenOptions;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+/// Largest nonce side file accepted. Commy nonces are short hex strings.
+pub const MAX_NONCE_BYTES: u64 = 256;
+
+/// `Ok` only for a regular file that is not a symlink. Checked before opening so a FIFO or device
+/// the server names is never opened.
+fn require_regular(path: &Path) -> Result<(), FallbackReason> {
+    match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_file() => Ok(()),
+        Ok(_) => Err(FallbackReason::NotRegularFile(path.display().to_string())),
+        Err(e) => Err(FallbackReason::OpenFailed(e.to_string())),
+    }
+}
 
 /// Why local mode was not entered. The caller stays on WSS ranges.
 #[derive(Debug, PartialEq, Eq)]
@@ -20,6 +34,10 @@ pub enum FallbackReason {
     NonceUnreadable(String),
     /// The nonce side file holds nothing.
     NonceEmpty,
+    /// The service file or the nonce file is not a regular file (device, directory, FIFO, symlink).
+    NotRegularFile(String),
+    /// The nonce side file is larger than `MAX_NONCE_BYTES`.
+    NonceTooLarge,
     /// The file could not be mapped.
     MapFailed(String),
     /// The offer named a path without a nonce path, or the reverse.
@@ -38,6 +56,24 @@ pub struct LocalMap {
     nonce: Secret<String>,
 }
 
+fn read_nonce(path: &Path) -> Result<String, FallbackReason> {
+    require_regular(path).map_err(|r| match r {
+        FallbackReason::OpenFailed(e) => FallbackReason::NonceUnreadable(e),
+        other => other,
+    })?;
+    let unreadable = |e: std::io::Error| FallbackReason::NonceUnreadable(e.to_string());
+    let mut buf = String::new();
+    let n = std::fs::File::open(path)
+        .map_err(unreadable)?
+        .take(MAX_NONCE_BYTES + 1)
+        .read_to_string(&mut buf)
+        .map_err(unreadable)?;
+    if n as u64 > MAX_NONCE_BYTES {
+        return Err(FallbackReason::NonceTooLarge);
+    }
+    Ok(buf)
+}
+
 /// The result of trying to enter local mode.
 pub enum LocalMapOutcome {
     Local(Box<LocalMap>),
@@ -46,7 +82,14 @@ pub enum LocalMapOutcome {
 
 impl LocalMap {
     /// Try to enter local mode for `path`, proving locality with the nonce in `nonce_path`.
+    ///
+    /// **Trust boundary:** the server chooses `path` and `nonce_path`. They must be regular files
+    /// (symlinks, devices, FIFOs and directories are refused), but a server that names a regular
+    /// file the user can write can still make us map it read-write. Only connect to servers you trust.
     pub fn open(path: &Path, nonce_path: &Path) -> LocalMapOutcome {
+        if let Err(r) = require_regular(path) {
+            return LocalMapOutcome::Fallback(r);
+        }
         let file = match OpenOptions::new().read(true).write(true).open(path) {
             Ok(f) => f,
             Err(e) => return LocalMapOutcome::Fallback(FallbackReason::OpenFailed(e.to_string())),
@@ -56,11 +99,9 @@ impl LocalMap {
             Ok(_) => {}
             Err(e) => return LocalMapOutcome::Fallback(FallbackReason::OpenFailed(e.to_string())),
         }
-        let raw = match std::fs::read_to_string(nonce_path) {
+        let raw = match read_nonce(nonce_path) {
             Ok(s) => s,
-            Err(e) => {
-                return LocalMapOutcome::Fallback(FallbackReason::NonceUnreadable(e.to_string()))
-            }
+            Err(r) => return LocalMapOutcome::Fallback(r),
         };
         let nonce = raw.trim();
         if nonce.is_empty() {
@@ -110,13 +151,17 @@ impl LocalMap {
     }
 
     /// The caller's view of the file.
+    ///
+    /// Other processes write this memory while the slice is alive, so the slice is not stable.
+    /// Treat it as a doc-level convenience until the S5 generation guards exist; do not hold
+    /// references across awaits or assume two reads agree.
     pub fn view(&self) -> &[u8] {
         &self.view
     }
 
     /// Base pointer of the caller's view (the region S3 protects).
-    pub fn view_ptr(&self) -> *mut u8 {
-        self.view.as_ptr() as *mut u8
+    pub fn view_ptr(&mut self) -> *mut u8 {
+        self.view.as_mut_ptr()
     }
 
     /// Apply an inbound range through the SDK-only alias; the view sees it, the trap does not.
@@ -213,6 +258,63 @@ mod tests {
     }
 
     #[test]
+    fn directory_as_service_file_is_refused() {
+        let d = dir();
+        let n = d.path().join("n");
+        std::fs::write(&n, "x").unwrap();
+        let r = fallback(LocalMap::open(d.path(), &n));
+        assert!(matches!(r, FallbackReason::NotRegularFile(_)), "{r:?}");
+    }
+
+    #[test]
+    fn directory_as_nonce_file_is_refused() {
+        let d = dir();
+        let f = d.path().join("svc.bin");
+        std::fs::write(&f, [0u8; 64]).unwrap();
+        let r = fallback(LocalMap::open(&f, d.path()));
+        assert!(matches!(r, FallbackReason::NotRegularFile(_)), "{r:?}");
+    }
+
+    #[test]
+    fn oversize_nonce_file_is_refused() {
+        let d = dir();
+        let f = d.path().join("svc.bin");
+        let n = d.path().join("n");
+        std::fs::write(&f, [0u8; 64]).unwrap();
+        std::fs::write(&n, vec![b'a'; MAX_NONCE_BYTES as usize + 1]).unwrap();
+        assert_eq!(
+            fallback(LocalMap::open(&f, &n)),
+            FallbackReason::NonceTooLarge
+        );
+        std::fs::write(&n, vec![b'a'; MAX_NONCE_BYTES as usize]).unwrap();
+        local(LocalMap::open(&f, &n));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_service_file_is_refused() {
+        let d = dir();
+        let real = d.path().join("real.bin");
+        let link = d.path().join("link.bin");
+        let n = d.path().join("n");
+        std::fs::write(&real, [0u8; 64]).unwrap();
+        std::fs::write(&n, "x").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let r = fallback(LocalMap::open(&link, &n));
+        assert!(matches!(r, FallbackReason::NotRegularFile(_)), "{r:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn device_as_nonce_file_is_refused_without_reading() {
+        let d = dir();
+        let f = d.path().join("svc.bin");
+        std::fs::write(&f, [0u8; 64]).unwrap();
+        let r = fallback(LocalMap::open(&f, Path::new("/dev/zero")));
+        assert!(matches!(r, FallbackReason::NotRegularFile(_)), "{r:?}");
+    }
+
+    #[test]
     fn blank_nonce_falls_back() {
         let d = dir();
         let f = d.path().join("svc.bin");
@@ -229,7 +331,8 @@ mod tests {
         let n = d.path().join("n");
         std::fs::write(&f, [7u8; 4096]).unwrap();
         std::fs::write(&n, "s3cret-nonce\r\n").unwrap();
-        let m = local(LocalMap::open(&f, &n));
+        let mut m = local(LocalMap::open(&f, &n));
+        assert!(!m.view_ptr().is_null());
         assert_eq!(m.len(), 4096);
         assert_eq!(m.view()[0], 7);
         assert_eq!(m.nonce().expose(), "s3cret-nonce");
