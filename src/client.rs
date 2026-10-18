@@ -29,6 +29,8 @@ pub struct Client {
     state: SharedState,
 
     /// Heartbeat interval
+    // The background heartbeat task is disabled (see the TODO in `_connect_impl`).
+    #[allow(dead_code)]
     heartbeat_interval: Duration,
 
     /// Maximum reconnection attempts
@@ -44,6 +46,7 @@ pub struct Client {
     file_watcher: Arc<RwLock<Option<Arc<VariableFileWatcher>>>>,
 
     /// Background heartbeat task handle
+    #[allow(dead_code)]
     heartbeat_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -616,6 +619,7 @@ impl Client {
     }
 
     /// Start background heartbeat task
+    #[allow(dead_code)]
     async fn start_heartbeat_task(&self) {
         // Stop existing heartbeat task if any
         let mut task_guard = self.heartbeat_task.write().await;

@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use tokio::time::{sleep, Duration};
 
-const COMMY_RELEASE_URL: &str = "https://github.com/commy-project/commy/releases/download";
 const DEFAULT_PORT: u16 = 8443;
 const DEFAULT_HTTP_PORT: u16 = 8000;
 
@@ -22,9 +21,9 @@ pub struct ServerConfig {
     pub key_path: PathBuf,
 }
 
-impl ServerConfig {
-    /// Create default configuration
-    pub fn default() -> Self {
+impl Default for ServerConfig {
+    /// Default configuration
+    fn default() -> Self {
         let data_dir = PathBuf::from(".commy_examples");
         let cert_path = data_dir.join("cert.pem");
         let key_path = data_dir.join("key.pem");
@@ -37,7 +36,9 @@ impl ServerConfig {
             key_path,
         }
     }
+}
 
+impl ServerConfig {
     /// Create configuration with custom port
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = port;
@@ -51,6 +52,13 @@ pub struct CommyServer {
     process: Option<Child>,
 }
 
+impl Default for CommyServer {
+    /// A server with default configuration
+    fn default() -> Self {
+        Self::new(ServerConfig::default())
+    }
+}
+
 impl CommyServer {
     /// Create a new server manager
     pub fn new(config: ServerConfig) -> Self {
@@ -58,11 +66,6 @@ impl CommyServer {
             config,
             process: None,
         }
-    }
-
-    /// Create a server with default configuration
-    pub fn default() -> Self {
-        Self::new(ServerConfig::default())
     }
 
     /// Prepare the server for running (download binary, generate certs, etc.)

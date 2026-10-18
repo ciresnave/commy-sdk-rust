@@ -139,19 +139,16 @@ impl VariableFileWatcher {
         loop {
             tokio::select! {
                 Some(event) = file_rx.recv() => {
-                    match event.kind {
-                        EventKind::Modify(_) => {
-                            for path in event.paths {
-                                if let Err(e) = Self::handle_file_change(
-                                    &path,
-                                    &tx,
-                                    &virtual_files,
-                                ).await {
-                                    eprintln!("Error handling file change: {}", e);
-                                }
+                    if let EventKind::Modify(_) = event.kind {
+                        for path in event.paths {
+                            if let Err(e) = Self::handle_file_change(
+                                &path,
+                                &tx,
+                                &virtual_files,
+                            ).await {
+                                eprintln!("Error handling file change: {}", e);
                             }
                         }
-                        _ => {}
                     }
                 }
                 _ = &mut *stop_rx => {
@@ -368,7 +365,6 @@ mod tests {
     #[tokio::test]
     async fn test_handle_file_change_skips_non_mem_extension() {
         use std::collections::HashMap;
-        use std::path::PathBuf;
         use std::sync::Arc;
         use tokio::sync::mpsc;
         use tokio::sync::RwLock;
@@ -401,7 +397,6 @@ mod tests {
     async fn test_handle_file_change_skips_unregistered_service() {
         use crate::virtual_file::VirtualVariableFile;
         use std::collections::HashMap;
-        use std::path::PathBuf;
         use std::sync::Arc;
         use tokio::sync::mpsc;
         use tokio::sync::RwLock;

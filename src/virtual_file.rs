@@ -350,10 +350,8 @@ impl VirtualVariableFile {
                 let var_end = metadata.offset + metadata.size;
 
                 // Check if this variable overlaps with the difference
-                if *diff_start < var_end && *diff_end > var_start {
-                    if !changed.contains(&name.clone()) {
-                        changed.push(name.clone());
-                    }
+                if *diff_start < var_end && *diff_end > var_start && !changed.contains(name) {
+                    changed.push(name.clone());
                 }
             }
         }
