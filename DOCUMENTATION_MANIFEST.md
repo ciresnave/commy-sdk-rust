@@ -175,7 +175,7 @@ This document catalogs all documentation created for the Commy Hybrid Client SDK
 **Purpose:** High-level status and overview  
 **Length:** ~400 lines  
 **Key Sections:**
-- Status: ✅ COMPLETE
+- Status: documented; see PLATFORMS.md and ROADMAP.md for what is verified
 - What was implemented (4 categories)
 - Key features (6 sections with checkmarks)
 - Dependencies added (5 crates)
@@ -365,7 +365,7 @@ ClientSDKs/rust-sdk/
 
 ## Documentation Quality Checklist
 
-- ✅ **Complete** - All major topics covered
+- All major topics covered
 - ✅ **Organized** - Clear structure with sections
 - ✅ **Cross-linked** - References between documents
 - ✅ **Examples** - 100+ code examples provided
@@ -448,8 +448,8 @@ ClientSDKs/rust-sdk/
 ✅ **Beginner-friendly** - Accessible language throughout
 ✅ **Expert-level** - Deep dives for advanced users
 ✅ **Well-indexed** - Easy to find information
-✅ **Complete** - Nothing left out or undefined
-✅ **Production-ready** - Suitable for immediate use
+Coverage: see ROADMAP.md for known gaps
+Maturity: pre-1.0; see PLATFORMS.md for what is verified
 
 ---
 

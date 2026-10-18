@@ -1,6 +1,6 @@
 # Commy Hybrid SDK: Complete Implementation Summary
 
-## Status: ✅ COMPLETE
+## Status: client side implemented; not verified against a real Commy server (see PLATFORMS.md, ROADMAP.md)
 
 The Commy Rust client SDK now includes a fully-functional **Pattern 3 (Hybrid)** architecture enabling transparent local/remote variable access with SIMD acceleration.
 
@@ -395,7 +395,7 @@ The hybrid architecture transforms the Commy Rust SDK from a remote-only client 
 - ✅ Offers flexible migration paths
 - ✅ Includes comprehensive documentation
 
-**Result: A production-ready hybrid client SDK ready for immediate deployment.**
+**Result: a hybrid client SDK, pre-1.0. See PLATFORMS.md and ROADMAP.md for what is verified.**
 
 ---
 

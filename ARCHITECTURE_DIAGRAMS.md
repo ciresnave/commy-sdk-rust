@@ -452,4 +452,4 @@ The hybrid architecture provides:
 5. **Security** - User-only permissions
 6. **Compatibility** - Backward compatible with old API
 
-All wrapped in a clean, documented, production-ready SDK.
+All wrapped in a documented SDK. See PLATFORMS.md for what is tested and what is not.
