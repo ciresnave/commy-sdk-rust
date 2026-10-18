@@ -202,25 +202,72 @@ pub enum ErrorCode {
     Timeout,
 }
 
+/// A value that must never appear in logs, panics or `{:?}` output.
+///
+/// `Debug` prints a fixed placeholder; the value is reachable only through [`Secret::expose`] or
+/// [`Secret::into_inner`], so every use is visible in code review. Serialization is transparent
+/// (the wire format is unchanged).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Secret<T>(T);
+
+impl<T> Secret<T> {
+    /// Wrap a sensitive value.
+    pub fn new(value: T) -> Self {
+        Secret(value)
+    }
+
+    /// Borrow the sensitive value.
+    pub fn expose(&self) -> &T {
+        &self.0
+    }
+
+    /// Take the sensitive value out.
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::fmt::Debug for Secret<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret([REDACTED])")
+    }
+}
+
+impl<T> From<T> for Secret<T> {
+    fn from(value: T) -> Self {
+        Secret(value)
+    }
+}
+
+impl From<&str> for Secret<String> {
+    fn from(value: &str) -> Self {
+        Secret(value.to_owned())
+    }
+}
+
 /// Authentication credentials
+///
+/// Secret fields are wrapped in [`Secret`], so `{:?}` of credentials (or of a
+/// [`ClientMessage::Authenticate`] holding them) never reveals them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum AuthCredentials {
     /// API key authentication
     #[serde(rename = "api_key")]
-    ApiKey { key: String },
+    ApiKey { key: Secret<String> },
 
     /// JWT token authentication
     #[serde(rename = "jwt")]
-    Jwt { token: String },
+    Jwt { token: Secret<String> },
 
     /// Username/password authentication
     #[serde(rename = "basic")]
-    Basic { username: String, password: String },
+    Basic { username: String, password: Secret<String> },
 
     /// Custom authentication
     #[serde(rename = "custom")]
-    Custom { data: serde_json::Value },
+    Custom { data: Secret<serde_json::Value> },
 }
 
 /// Service metadata
@@ -347,7 +394,7 @@ mod tests {
         let msg = ClientMessage::Authenticate {
             tenant_id: "tenant1".to_string(),
             client_version: "0.1.0".to_string(),
-            credentials: AuthCredentials::ApiKey { key: "secret".to_string() },
+            credentials: AuthCredentials::ApiKey { key: "secret".into() },
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
@@ -391,22 +438,57 @@ mod tests {
 
     #[test]
     fn test_auth_credentials_variants_serialization() {
-        let jwt = AuthCredentials::Jwt { token: "tok".to_string() };
+        let jwt = AuthCredentials::Jwt { token: "tok".into() };
         let json = serde_json::to_string(&jwt).unwrap();
         assert!(json.contains("jwt"));
 
         let basic = AuthCredentials::Basic {
             username: "user".to_string(),
-            password: "pass".to_string(),
+            password: "pass".into(),
         };
         let json = serde_json::to_string(&basic).unwrap();
         assert!(json.contains("basic"));
 
         let custom = AuthCredentials::Custom {
-            data: serde_json::json!({"key": "val"}),
+            data: serde_json::json!({"key": "val"}).into(),
         };
         let json = serde_json::to_string(&custom).unwrap();
         assert!(json.contains("custom"));
+    }
+
+    /// Audit finding 1: `{:?}` of credentials (or of an Authenticate message holding them)
+    /// must never reveal the secret.
+    #[test]
+    fn test_debug_output_never_contains_credential_secrets() {
+        let cases = [
+            (AuthCredentials::Basic { username: "alice".into(), password: "hunter2-SECRET".into() }, "hunter2-SECRET"),
+            (AuthCredentials::ApiKey { key: "apikey-SECRET".into() }, "apikey-SECRET"),
+            (AuthCredentials::Jwt { token: "jwt-SECRET".into() }, "jwt-SECRET"),
+            (AuthCredentials::Custom { data: serde_json::json!({"pw": "custom-SECRET"}).into() }, "custom-SECRET"),
+        ];
+        for (creds, secret) in cases {
+            let msg = ClientMessage::Authenticate {
+                tenant_id: "t".into(),
+                client_version: "v".into(),
+                credentials: creds.clone(),
+            };
+            for shown in [format!("{:?}", creds), format!("{:#?}", creds), format!("{:?}", msg)] {
+                assert!(!shown.contains(secret), "Debug output leaked {secret}: {shown}");
+                assert!(shown.contains("REDACTED"), "expected redaction marker in {shown}");
+            }
+            // positive control: the wire format still carries the secret
+            assert!(serde_json::to_string(&msg).unwrap().contains(secret));
+        }
+    }
+
+    #[test]
+    fn test_secret_expose_and_into_inner() {
+        let s: Secret<String> = "abc".into();
+        assert_eq!(s.expose(), "abc");
+        assert_eq!(s.clone().into_inner(), "abc");
+        assert_eq!(format!("{:?}", s), "Secret([REDACTED])");
+        assert_eq!(serde_json::to_string(&s).unwrap(), "\"abc\"");
+        assert_eq!(serde_json::from_str::<Secret<String>>("\"abc\"").unwrap(), s);
     }
 
     // ─────────────────────────────────────────────────────────────

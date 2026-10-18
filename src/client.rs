@@ -1104,7 +1104,7 @@ mod tests {
         client.inject_connection_for_test(conn).await;
 
         let creds = crate::message::AuthCredentials::ApiKey {
-            key: "bad_key".to_string(),
+            key: "bad_key".into(),
         };
         let result = client.authenticate("tenant_a", creds).await;
 
@@ -1138,7 +1138,7 @@ mod tests {
         client.inject_connection_for_test(conn).await;
 
         let creds = crate::message::AuthCredentials::Jwt {
-            token: "expired-token".to_string(),
+            token: "expired-token".into(),
         };
         let result = client.authenticate("tenant_a", creds).await;
         assert!(result.is_err());
@@ -1411,7 +1411,7 @@ mod tests {
         client.inject_connection_for_test(conn).await;
 
         let creds = crate::message::AuthCredentials::ApiKey {
-            key: "test-key".to_string(),
+            key: "test-key".into(),
         };
         let result = client.authenticate("tenant_a", creds).await;
         assert!(result.is_ok(), "authenticate must succeed: {:?}", result);
