@@ -39,7 +39,7 @@ impl Connection {
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if let Ok(serialized) = serde_json::to_string(&msg) {
-                    let _ = write.send(Message::Text(serialized)).await;
+                    let _ = write.send(Message::Text(serialized.into())).await;
                 }
             }
         });
