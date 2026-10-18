@@ -8,7 +8,7 @@ The Commy Rust client SDK now includes a **hybrid architecture** that provides:
 - ✅ **Massive Performance** - 1,000,000x faster for local clients
 - ✅ **SIMD Acceleration** - Automatic CPU-optimized comparison
 - ✅ **Backward Compatible** - All existing code still works
-- ✅ **Production Ready** - Fully implemented and documented
+- **Pre-1.0** - implemented and documented; see PLATFORMS.md for what is verified
 
 ## Start Here
 
@@ -189,19 +189,19 @@ let data = vf.read_variable_slice("var").await?;
 **A:** Local files use 0600 permissions (owner-only access). All server operations check permissions. See HYBRID_ARCHITECTURE.md#security-considerations.
 
 ### Q: Can I use this in production?
-**A:** Yes! The implementation is complete and tested. See HYBRID_TESTING_GUIDE.md for test coverage.
+**A:** Not yet. The SDK is pre-1.0, has not been run against a real Commy server end to end, and the audit follow-ups in ROADMAP.md (unauthenticated operations, reply matching, wire disagreements) are open. See PLATFORMS.md and HYBRID_TESTING_GUIDE.md.
 
 ## Implementation Status
 
 | Component      | Status     | Tests       | Doc   |
 | -------------- | ---------- | ----------- | ----- |
-| Virtual Files  | ✅ Complete | ✅ Yes       | ✅ Yes |
-| File Accessor  | ✅ Complete | ✅ Yes       | ✅ Yes |
-| File Watcher   | ✅ Complete | ✅ Yes       | ✅ Yes |
-| SIMD Detection | ✅ Complete | ✅ Yes       | ✅ Yes |
-| Client API     | ✅ Complete | ✅ Yes       | ✅ Yes |
-| Protocol       | ✅ Complete | ✅ Yes       | ✅ Yes |
-| Documentation  | ✅ Complete | ✅ Extensive | ✅ Yes |
+| Virtual Files  | Implemented | ✅ Yes       | ✅ Yes |
+| File Accessor  | Implemented | ✅ Yes       | ✅ Yes |
+| File Watcher   | Implemented | ✅ Yes       | ✅ Yes |
+| SIMD Detection | Implemented | ✅ Yes       | ✅ Yes |
+| Client API     | Implemented | ✅ Yes       | ✅ Yes |
+| Protocol       | Audit findings open (ROADMAP.md) | Partial | ✅ Yes |
+| Documentation  | Written     | ✅ Extensive | ✅ Yes |
 | Server Handler | 🔄 Needed   | -           | ✅ Yes |
 
 ## Getting Help
