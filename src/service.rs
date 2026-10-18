@@ -162,12 +162,7 @@ mod tests {
 
     #[test]
     fn test_add_and_get_variable() {
-        let mut svc = Service::new(
-            "s".to_string(),
-            "n".to_string(),
-            "t".to_string(),
-            None,
-        );
+        let mut svc = Service::new("s".to_string(), "n".to_string(), "t".to_string(), None);
 
         let meta = VariableMetadata {
             name: "counter".to_string(),
@@ -255,15 +250,30 @@ mod tests {
     #[test]
     fn test_service_manager_list() {
         let mut manager = ServiceManager::new();
-        manager.register(Service::new("s1".to_string(), "a".to_string(), "t".to_string(), None));
-        manager.register(Service::new("s2".to_string(), "b".to_string(), "t".to_string(), None));
+        manager.register(Service::new(
+            "s1".to_string(),
+            "a".to_string(),
+            "t".to_string(),
+            None,
+        ));
+        manager.register(Service::new(
+            "s2".to_string(),
+            "b".to_string(),
+            "t".to_string(),
+            None,
+        ));
         assert_eq!(manager.list().len(), 2);
     }
 
     #[test]
     fn test_service_manager_clear() {
         let mut manager = ServiceManager::new();
-        manager.register(Service::new("s1".to_string(), "a".to_string(), "t".to_string(), None));
+        manager.register(Service::new(
+            "s1".to_string(),
+            "a".to_string(),
+            "t".to_string(),
+            None,
+        ));
         assert!(!manager.is_empty());
         manager.clear();
         assert!(manager.is_empty());
@@ -335,7 +345,11 @@ mod tests {
             "t1".to_string(),
             None,
         ));
-        assert_eq!(manager.len(), 1, "duplicate register must overwrite, not grow");
+        assert_eq!(
+            manager.len(),
+            1,
+            "duplicate register must overwrite, not grow"
+        );
         assert_eq!(
             manager.get("dup_id").unwrap().name(),
             "second_name",
@@ -354,9 +368,7 @@ mod tests {
 
     #[test]
     fn test_service_add_variable_duplicate_name_last_wins() {
-        let mut svc = Service::new(
-            "s".to_string(), "n".to_string(), "t".to_string(), None,
-        );
+        let mut svc = Service::new("s".to_string(), "n".to_string(), "t".to_string(), None);
         let meta1 = crate::message::VariableMetadata {
             name: "my_var".to_string(),
             service_id: "s".to_string(),

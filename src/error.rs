@@ -118,25 +118,73 @@ mod tests {
     #[test]
     fn test_error_display_messages() {
         let cases: &[(&str, CommyError)] = &[
-            ("WebSocket error", CommyError::WebSocketError("refused".to_string())),
-            ("Connection lost", CommyError::ConnectionLost("drop".to_string())),
-            ("Authentication failed", CommyError::AuthenticationFailed("bad token".to_string())),
-            ("Unauthorized", CommyError::Unauthorized("no perms".to_string())),
+            (
+                "WebSocket error",
+                CommyError::WebSocketError("refused".to_string()),
+            ),
+            (
+                "Connection lost",
+                CommyError::ConnectionLost("drop".to_string()),
+            ),
+            (
+                "Authentication failed",
+                CommyError::AuthenticationFailed("bad token".to_string()),
+            ),
+            (
+                "Unauthorized",
+                CommyError::Unauthorized("no perms".to_string()),
+            ),
             ("Not found", CommyError::NotFound("item".to_string())),
-            ("Service not found", CommyError::ServiceNotFound("svc".to_string())),
-            ("Tenant not found", CommyError::TenantNotFound("t1".to_string())),
+            (
+                "Service not found",
+                CommyError::ServiceNotFound("svc".to_string()),
+            ),
+            (
+                "Tenant not found",
+                CommyError::TenantNotFound("t1".to_string()),
+            ),
             ("Already exists", CommyError::AlreadyExists("x".to_string())),
-            ("Permission denied", CommyError::PermissionDenied("read".to_string())),
-            ("Invalid request", CommyError::InvalidRequest("missing field".to_string())),
-            ("Invalid message format", CommyError::InvalidMessage("bad fmt".to_string())),
+            (
+                "Permission denied",
+                CommyError::PermissionDenied("read".to_string()),
+            ),
+            (
+                "Invalid request",
+                CommyError::InvalidRequest("missing field".to_string()),
+            ),
+            (
+                "Invalid message format",
+                CommyError::InvalidMessage("bad fmt".to_string()),
+            ),
             ("timeout", CommyError::Timeout),
-            ("Channel error", CommyError::ChannelError("closed".to_string())),
-            ("Invalid state", CommyError::InvalidState("disconnected".to_string())),
-            ("Memory mapping error", CommyError::MemoryMappingError("mmap fail".to_string())),
-            ("File watcher error", CommyError::WatcherError("watch fail".to_string())),
-            ("Variable not found", CommyError::VariableNotFound("var_x".to_string())),
-            ("Invalid variable offset", CommyError::InvalidOffset("bad offset".to_string())),
-            ("SIMD operation error", CommyError::SimdError("simd fail".to_string())),
+            (
+                "Channel error",
+                CommyError::ChannelError("closed".to_string()),
+            ),
+            (
+                "Invalid state",
+                CommyError::InvalidState("disconnected".to_string()),
+            ),
+            (
+                "Memory mapping error",
+                CommyError::MemoryMappingError("mmap fail".to_string()),
+            ),
+            (
+                "File watcher error",
+                CommyError::WatcherError("watch fail".to_string()),
+            ),
+            (
+                "Variable not found",
+                CommyError::VariableNotFound("var_x".to_string()),
+            ),
+            (
+                "Invalid variable offset",
+                CommyError::InvalidOffset("bad offset".to_string()),
+            ),
+            (
+                "SIMD operation error",
+                CommyError::SimdError("simd fail".to_string()),
+            ),
             ("just misc", CommyError::Other("just misc".to_string())),
         ];
 
@@ -181,10 +229,13 @@ mod tests {
         // Build an encode error via a custom Serialize impl that always rejects
         struct AlwaysFails;
         impl serde::Serialize for AlwaysFails {
-            fn serialize<S: serde::Serializer>(&self, _: S)
-                -> std::result::Result<S::Ok, S::Error>
-            {
-                Err(<S::Error as serde::ser::Error>::custom("intentional test failure"))
+            fn serialize<S: serde::Serializer>(
+                &self,
+                _: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
+                Err(<S::Error as serde::ser::Error>::custom(
+                    "intentional test failure",
+                ))
             }
         }
         let raw = rmp_serde::to_vec(&AlwaysFails).unwrap_err();

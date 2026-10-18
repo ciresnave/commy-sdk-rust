@@ -9,7 +9,7 @@
 //! Note: These tests use mock/local testing without actual WebSocket server.
 //! For full integration with real server, see server integration tests.
 
-use commy_sdk_rust::message::{ClientMessage, ServerMessage};
+use commy_sdk_rust::message::{ErrorCode, ServerMessage};
 
 #[tokio::test]
 async fn test_crud_permissions_flow() {
@@ -124,8 +124,6 @@ async fn test_delete_service_message_format() {
 #[tokio::test]
 async fn test_error_code_variants() {
     // Test that all error codes are properly defined
-    use commy_sdk_rust::message::ErrorCode;
-
     println!("Available Error Codes:");
     println!("  - NotFound: Resource doesn't exist");
     println!("  - PermissionDenied: Insufficient permissions");
@@ -150,7 +148,7 @@ async fn test_error_code_variants() {
 
     for code in codes {
         let json = serde_json::to_string(&code).expect("Should serialize");
-        println!("  {} -> {}", format!("{:?}", code), json);
+        println!("  {:?} -> {}", code, json);
     }
 }
 
@@ -203,7 +201,6 @@ async fn test_error_response_message() {
 #[tokio::test]
 async fn test_create_service_idempotency_handling() {
     // Test showing how clients should handle AlreadyExists error
-    use commy_sdk_rust::message::ErrorCode;
 
     println!("Create Service Idempotency Pattern:");
     println!("==================================\n");
@@ -300,8 +297,6 @@ async fn test_client_lifecycle() {
 #[tokio::test]
 async fn test_error_handling_patterns() {
     // Document error handling patterns
-    use commy_sdk_rust::CommyError;
-
     println!("Error Handling Patterns for CRUD:");
     println!("=================================\n");
 

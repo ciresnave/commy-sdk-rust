@@ -36,16 +36,14 @@ impl LocalFileAccessor {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&file_path)?;
 
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
         let mmap = mmap.make_read_only()?;
         // Note: mmap keeps the file open via its file descriptor
 
-        Ok(Self {
-            file_path,
-            mmap,
-        })
+        Ok(Self { file_path, mmap })
     }
 
     /// Get file path
@@ -67,7 +65,7 @@ impl FileAccessor for LocalFileAccessor {
 
         if end > self.mmap.len() {
             return Err(crate::error::CommyError::InvalidOffset(
-                format!("Read extends beyond file bounds"),
+                "Read extends beyond file bounds".to_string(),
             ));
         }
 
@@ -102,6 +100,12 @@ pub struct RemoteFileAccessor {
     buffer: std::sync::Arc<tokio::sync::RwLock<Vec<u8>>>,
 }
 
+impl Default for RemoteFileAccessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RemoteFileAccessor {
     /// Create a new remote file accessor
     pub fn new() -> Self {
@@ -132,7 +136,7 @@ impl FileAccessor for RemoteFileAccessor {
 
         if end > buf.len() {
             return Err(crate::error::CommyError::InvalidOffset(
-                format!("Read extends beyond buffer bounds"),
+                "Read extends beyond buffer bounds".to_string(),
             ));
         }
 
@@ -194,10 +198,7 @@ mod tests {
         let accessor = RemoteFileAccessor::new();
         accessor.update_buffer(vec![0; 8]).await.unwrap();
 
-        accessor
-            .write_bytes(2, &[99, 88, 77])
-            .await
-            .unwrap();
+        accessor.write_bytes(2, &[99, 88, 77]).await.unwrap();
 
         let data = accessor.read_bytes(0, 8).await.unwrap();
         assert_eq!(data, vec![0, 0, 99, 88, 77, 0, 0, 0]);
@@ -254,14 +255,14 @@ mod tests {
     #[tokio::test]
     async fn test_local_accessor_new_and_is_local() {
         let (_tmp, path) = make_tmp_file(64);
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         assert!(accessor.is_local());
     }
 
     #[tokio::test]
     async fn test_local_accessor_file_size() {
         let (_tmp, path) = make_tmp_file(128);
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         let size = accessor.file_size().await.unwrap();
         assert_eq!(size, 128);
     }
@@ -272,7 +273,7 @@ mod tests {
         let (_tmp, path) = make_tmp_file(8);
         // Write known content
         std::fs::write(&path, &content).unwrap();
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         assert_eq!(accessor.as_slice(), &content[..]);
     }
 
@@ -281,7 +282,7 @@ mod tests {
         let content = vec![10u8, 20, 30, 40, 50, 60, 70, 80];
         let (_tmp, path) = make_tmp_file(8);
         std::fs::write(&path, &content).unwrap();
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         let bytes = accessor.read_bytes(2, 4).await.unwrap();
         assert_eq!(bytes, vec![30, 40, 50, 60]);
     }
@@ -289,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_accessor_read_bytes_out_of_bounds_returns_error() {
         let (_tmp, path) = make_tmp_file(8);
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         let result = accessor.read_bytes(0, 100).await;
         assert!(result.is_err());
     }
@@ -297,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_accessor_write_bytes_returns_invalid_state() {
         let (_tmp, path) = make_tmp_file(16);
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         let result = accessor.write_bytes(0, &[1, 2, 3]).await;
         assert!(
             result.is_err(),
@@ -313,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_accessor_resize_returns_invalid_state() {
         let (_tmp, path) = make_tmp_file(16);
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         let result = accessor.resize(256).await;
         assert!(
             result.is_err(),
@@ -328,7 +329,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_accessor_path() {
         let (_tmp, path) = make_tmp_file(32);
-        let accessor = LocalFileAccessor::new(path.clone().into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path.clone()).await.unwrap();
         assert_eq!(accessor.path(), &std::path::PathBuf::from(&path));
     }
 
@@ -357,8 +358,12 @@ mod tests {
         let content = vec![10u8, 20, 30, 40, 50, 60, 70, 80];
         let (_tmp, path) = make_tmp_file(8);
         std::fs::write(&path, &content).unwrap();
-        let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
+        let accessor = LocalFileAccessor::new(path).await.unwrap();
         let bytes = accessor.read_bytes(4, 4).await.unwrap();
-        assert_eq!(bytes, vec![50, 60, 70, 80], "read at exact boundary must return last 4 bytes");
+        assert_eq!(
+            bytes,
+            vec![50, 60, 70, 80],
+            "read at exact boundary must return last 4 bytes"
+        );
     }
 }

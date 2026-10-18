@@ -350,10 +350,8 @@ impl VirtualVariableFile {
                 let var_end = metadata.offset + metadata.size;
 
                 // Check if this variable overlaps with the difference
-                if *diff_start < var_end && *diff_end > var_start {
-                    if !changed.contains(&name.clone()) {
-                        changed.push(name.clone());
-                    }
+                if *diff_start < var_end && *diff_end > var_start && !changed.contains(name) {
+                    changed.push(name.clone());
                 }
             }
         }
@@ -429,11 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_and_get_bytes() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         vf.update_bytes(vec![1, 2, 3]).await.unwrap();
         let b = vf.bytes().await;
@@ -442,11 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shadow_bytes_and_update() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         vf.update_shadow_bytes(vec![9, 8, 7]).await.unwrap();
         let s = vf.shadow_bytes().await;
@@ -455,11 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_changes() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         let meta = VariableMetadata::new("x".to_string(), 0, 4, 1);
         vf.register_variable(meta).await.unwrap();
@@ -472,11 +458,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_variables_changed() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         vf.mark_variables_changed(vec!["a".to_string(), "b".to_string()])
             .await;
@@ -490,7 +472,9 @@ mod tests {
     #[tokio::test]
     async fn test_compare_ranges_equal_buffers() {
         let buf = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let diffs = VirtualVariableFile::compare_ranges(&buf, &buf).await.unwrap();
+        let diffs = VirtualVariableFile::compare_ranges(&buf, &buf)
+            .await
+            .unwrap();
         assert!(diffs.is_empty());
     }
 
@@ -504,11 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_changed_variables_from_diff() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         let meta = VariableMetadata::new("score".to_string(), 0, 4, 1);
         vf.register_variable(meta).await.unwrap();
@@ -521,11 +501,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_changed_variables_no_overlap() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         let meta = VariableMetadata::new("score".to_string(), 0, 4, 1);
         vf.register_variable(meta).await.unwrap();
@@ -538,11 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_shadow_clears_changes() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         let meta = VariableMetadata::new("v".to_string(), 0, 4, 1);
         vf.register_variable(meta).await.unwrap();
@@ -559,11 +531,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_variable_size_mismatch_errors() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         let meta = VariableMetadata::new("v".to_string(), 0, 4, 1);
         vf.register_variable(meta).await.unwrap();
@@ -575,11 +543,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_variables_empty_returns_empty_vec() {
-        let vf = VirtualVariableFile::new(
-            "svc_empty".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf =
+            VirtualVariableFile::new("svc_empty".to_string(), "cfg".to_string(), "t1".to_string());
         let list = vf.list_variables().await.unwrap();
         assert!(
             list.is_empty(),
@@ -590,11 +555,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_variables() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         vf.register_variable(VariableMetadata::new("a".to_string(), 0, 4, 1))
             .await
@@ -609,11 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_variable_metadata_not_found_errors() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         let result = vf.get_variable_metadata("nonexistent").await;
         assert!(result.is_err());
@@ -621,40 +578,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_variable_slice_out_of_bounds() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         // Register a variable but don't resize the buffer manually
         let meta = VariableMetadata::new("v".to_string(), 100, 8, 1);
         // Don't use register_variable (which auto-resizes) — directly test the
         // out of bounds path by writing metadata manually then trying to read
         vf.register_variable(meta).await.unwrap(); // register_variable auto-resizes
-        // Now shrink the bytes so it IS out of bounds
-        // We can't easily shrink via the public API; this just verifies happy path
+                                                   // Now shrink the bytes so it IS out of bounds
+                                                   // We can't easily shrink via the public API; this just verifies happy path
         let data = vf.read_variable_slice("v").await.unwrap();
         assert_eq!(data.len(), 8);
     }
 
     #[test]
     fn test_service_id_accessor() {
-        let vf = VirtualVariableFile::new(
-            "svc-id-42".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf =
+            VirtualVariableFile::new("svc-id-42".to_string(), "cfg".to_string(), "t1".to_string());
         assert_eq!(vf.service_id(), "svc-id-42");
     }
 
     #[test]
     fn test_service_name_accessor() {
-        let vf = VirtualVariableFile::new(
-            "id".to_string(),
-            "my-service".to_string(),
-            "t1".to_string(),
-        );
+        let vf =
+            VirtualVariableFile::new("id".to_string(), "my-service".to_string(), "t1".to_string());
         assert_eq!(vf.service_name(), "my-service");
     }
 
@@ -670,12 +617,10 @@ mod tests {
 
     #[test]
     fn test_variable_metadata_with_persistent() {
-        let meta = VariableMetadata::new("var1".to_string(), 0, 8, 1)
-            .with_persistent(true);
+        let meta = VariableMetadata::new("var1".to_string(), 0, 8, 1).with_persistent(true);
         assert!(meta.persistent);
 
-        let meta2 = VariableMetadata::new("var2".to_string(), 8, 4, 2)
-            .with_persistent(false);
+        let meta2 = VariableMetadata::new("var2".to_string(), 8, 4, 2).with_persistent(false);
         assert!(!meta2.persistent);
     }
 
@@ -686,11 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_variable_at_nonzero_offset_does_not_corrupt_adjacent() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         // Two adjacent 4-byte variables
         vf.register_variable(VariableMetadata::new("a".to_string(), 0, 4, 1))
@@ -701,11 +642,17 @@ mod tests {
             .unwrap();
 
         // Write known bytes to both
-        vf.write_variable("a", &[0xAA, 0xBB, 0xCC, 0xDD]).await.unwrap();
-        vf.write_variable("b", &[0x11, 0x22, 0x33, 0x44]).await.unwrap();
+        vf.write_variable("a", &[0xAA, 0xBB, 0xCC, 0xDD])
+            .await
+            .unwrap();
+        vf.write_variable("b", &[0x11, 0x22, 0x33, 0x44])
+            .await
+            .unwrap();
 
         // Now overwrite only "b"
-        vf.write_variable("b", &[0xFF, 0xFE, 0xFD, 0xFC]).await.unwrap();
+        vf.write_variable("b", &[0xFF, 0xFE, 0xFD, 0xFC])
+            .await
+            .unwrap();
 
         // "a" must be unchanged
         let a_bytes = vf.read_variable_slice("a").await.unwrap();
@@ -755,11 +702,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_changed_variables_multiple_overlapping() {
-        let vf = VirtualVariableFile::new(
-            "svc".to_string(),
-            "cfg".to_string(),
-            "t1".to_string(),
-        );
+        let vf = VirtualVariableFile::new("svc".to_string(), "cfg".to_string(), "t1".to_string());
 
         // Two variables that overlap in the [4, 8) range of an 8-byte buffer
         vf.register_variable(VariableMetadata::new("x".to_string(), 0, 8, 1))

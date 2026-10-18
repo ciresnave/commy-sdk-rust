@@ -152,14 +152,8 @@ mod tests {
     #[test]
     fn test_authenticated_tenants_list_multiple() {
         let mut state = ClientState::new("c".to_string());
-        state.add_auth_context(
-            "t1".to_string(),
-            AuthContext::new("t1".to_string(), vec![]),
-        );
-        state.add_auth_context(
-            "t2".to_string(),
-            AuthContext::new("t2".to_string(), vec![]),
-        );
+        state.add_auth_context("t1".to_string(), AuthContext::new("t1".to_string(), vec![]));
+        state.add_auth_context("t2".to_string(), AuthContext::new("t2".to_string(), vec![]));
         let tenants = state.authenticated_tenants();
         assert_eq!(tenants.len(), 2);
     }
@@ -167,14 +161,8 @@ mod tests {
     #[test]
     fn test_clear_auth_removes_single_tenant() {
         let mut state = ClientState::new("c".to_string());
-        state.add_auth_context(
-            "t1".to_string(),
-            AuthContext::new("t1".to_string(), vec![]),
-        );
-        state.add_auth_context(
-            "t2".to_string(),
-            AuthContext::new("t2".to_string(), vec![]),
-        );
+        state.add_auth_context("t1".to_string(), AuthContext::new("t1".to_string(), vec![]));
+        state.add_auth_context("t2".to_string(), AuthContext::new("t2".to_string(), vec![]));
 
         state.clear_auth("t1");
         assert!(!state.is_authenticated_to("t1"));
@@ -184,10 +172,7 @@ mod tests {
     #[test]
     fn test_clear_all_auth() {
         let mut state = ClientState::new("c".to_string());
-        state.add_auth_context(
-            "t1".to_string(),
-            AuthContext::new("t1".to_string(), vec![]),
-        );
+        state.add_auth_context("t1".to_string(), AuthContext::new("t1".to_string(), vec![]));
         state.clear_all_auth();
         assert!(state.authenticated_tenants().is_empty());
     }
@@ -197,10 +182,7 @@ mod tests {
         let mut state = ClientState::new("c".to_string());
         state.connection_state = crate::connection::ConnectionState::Connected;
         state.session_id = Some("ses123".to_string());
-        state.add_auth_context(
-            "t1".to_string(),
-            AuthContext::new("t1".to_string(), vec![]),
-        );
+        state.add_auth_context("t1".to_string(), AuthContext::new("t1".to_string(), vec![]));
 
         state.reset();
 
@@ -230,11 +212,16 @@ mod tests {
             None,
         );
         state.services.register(svc);
-        assert_eq!(state.services.len(), 1, "precondition: service must be registered");
+        assert_eq!(
+            state.services.len(),
+            1,
+            "precondition: service must be registered"
+        );
 
         state.reset();
         assert_eq!(
-            state.services.len(), 0,
+            state.services.len(),
+            0,
             "reset() must clear the service registry"
         );
     }

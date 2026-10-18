@@ -3,10 +3,7 @@ mod tenant_server_behavior_tests {
     use serde_json::json;
 
     /// Helper to simulate server processing of tenant operations
-    fn simulate_create_tenant_response(
-        tenant_id: &str,
-        tenant_name: &str,
-    ) -> serde_json::Value {
+    fn simulate_create_tenant_response(tenant_id: &str, tenant_name: &str) -> serde_json::Value {
         json!({
             "type": "TenantResult",
             "data": {
@@ -67,10 +64,8 @@ mod tenant_server_behavior_tests {
 
     #[test]
     fn test_server_create_tenant_invalid_request() {
-        let response = simulate_error_response(
-            "InvalidRequest",
-            "tenant_id and tenant_name are required",
-        );
+        let response =
+            simulate_error_response("InvalidRequest", "tenant_id and tenant_name are required");
         assert_eq!(response["data"]["code"].as_str().unwrap(), "InvalidRequest");
     }
 
@@ -133,9 +128,11 @@ mod tenant_server_behavior_tests {
 
     #[test]
     fn test_server_handles_special_characters_in_tenant_name() {
-        let response =
-            simulate_create_tenant_response("org-special", "Org (Special) & Co.");
-        assert_eq!(response["data"]["tenant_id"].as_str().unwrap(), "org-special");
+        let response = simulate_create_tenant_response("org-special", "Org (Special) & Co.");
+        assert_eq!(
+            response["data"]["tenant_id"].as_str().unwrap(),
+            "org-special"
+        );
     }
 
     #[test]
@@ -236,10 +233,7 @@ mod tenant_server_behavior_tests {
 
     #[test]
     fn test_server_tenant_error_message_clarity() {
-        let response = simulate_error_response(
-            "AlreadyExists",
-            "Tenant 'org_test' already exists",
-        );
+        let response = simulate_error_response("AlreadyExists", "Tenant 'org_test' already exists");
         let message = response["data"]["message"].as_str().unwrap();
 
         assert!(message.contains("Tenant"));

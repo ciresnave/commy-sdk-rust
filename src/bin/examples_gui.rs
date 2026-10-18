@@ -140,7 +140,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start web server
     println!("🌐 Starting GUI server...");
-    let gui_port = "8080";
     let gui_addr = "127.0.0.1:8080";
 
     println!("  ├─ Frontend at: http://{}", gui_addr);
@@ -202,7 +201,10 @@ async fn get_example(Path(name): Path<String>) -> Result<Json<Example>, String> 
         .ok_or_else(|| format!("Example '{}' not found", name))
 }
 
-async fn run_example(Path(name): Path<String>, State(state): State<AppState>) -> Json<RunResponse> {
+async fn run_example(
+    Path(name): Path<String>,
+    State(_state): State<AppState>,
+) -> Json<RunResponse> {
     // Run the pre-built example binary directly
     let exe_path = format!("target/release/examples/{}.exe", name);
     match tokio::process::Command::new(&exe_path)

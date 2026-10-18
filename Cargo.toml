@@ -11,8 +11,9 @@
 
 [package]
 edition = "2021"
+rust-version = "1.89"
 name = "commy-sdk-rust"
-version = "0.1.0"
+version = "0.1.2"
 authors = ["Commy Contributors"]
 build = false
 autolib = false
@@ -138,9 +139,6 @@ features = [
     "serde",
     "v4",
 ]
-
-[dependencies.web-server-abstraction]
-version = "1.0"
 
 [dev-dependencies.tokio-test]
 version = "0.4"

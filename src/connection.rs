@@ -106,13 +106,13 @@ impl Connection {
     /// - `server_tx` is used by the test to **inject** `ServerMessage` responses
     /// - `client_rx` is used by the test to **observe** `ClientMessage`s sent by the client
     #[cfg(test)]
-    pub fn new_for_test()
-    -> (Self, mpsc::UnboundedSender<ServerMessage>, mpsc::UnboundedReceiver<ClientMessage>)
-    {
-        let (server_inbound_tx, server_inbound_rx) =
-            mpsc::unbounded_channel::<ServerMessage>();
-        let (client_outbound_tx, client_outbound_rx) =
-            mpsc::unbounded_channel::<ClientMessage>();
+    pub fn new_for_test() -> (
+        Self,
+        mpsc::UnboundedSender<ServerMessage>,
+        mpsc::UnboundedReceiver<ClientMessage>,
+    ) {
+        let (server_inbound_tx, server_inbound_rx) = mpsc::unbounded_channel::<ServerMessage>();
+        let (client_outbound_tx, client_outbound_rx) = mpsc::unbounded_channel::<ClientMessage>();
 
         let conn = Self {
             state: Arc::new(RwLock::new(ConnectionState::Connected)),
@@ -220,7 +220,10 @@ mod tests {
         // Drop the send half — channel is now closed from the server side
         drop(server_tx);
 
-        let result = conn.recv().await.expect("recv should not error even when channel closed");
+        let result = conn
+            .recv()
+            .await
+            .expect("recv should not error even when channel closed");
         assert!(
             result.is_none(),
             "Closed channel should return Ok(None), got {:?}",

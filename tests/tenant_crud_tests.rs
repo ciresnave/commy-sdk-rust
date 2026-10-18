@@ -47,7 +47,8 @@ mod tenant_crud_tests {
                 "tenant_id": "org_alpha",
                 "message": "Tenant 'Alpha Organization' created"
             }
-        }).to_string();
+        })
+        .to_string();
 
         let response = parse_response(&response_str);
         assert_eq!(response["type"].as_str().unwrap(), "TenantResult");
@@ -64,7 +65,8 @@ mod tenant_crud_tests {
                 "success": true,
                 "message": "Tenant 'org_alpha' deleted"
             }
-        }).to_string();
+        })
+        .to_string();
 
         let response = parse_response(&response_str);
         assert_eq!(response["type"].as_str().unwrap(), "Result");
@@ -81,7 +83,10 @@ mod tenant_crud_tests {
             }
         });
 
-        assert_eq!(error_response["data"]["code"].as_str().unwrap(), "AlreadyExists");
+        assert_eq!(
+            error_response["data"]["code"].as_str().unwrap(),
+            "AlreadyExists"
+        );
     }
 
     #[test]
@@ -183,10 +188,7 @@ mod tenant_crud_tests {
             }
         });
 
-        assert_eq!(
-            msg["data"]["tenant_id"].as_str().unwrap(),
-            "org-alpha_123"
-        );
+        assert_eq!(msg["data"]["tenant_id"].as_str().unwrap(), "org-alpha_123");
     }
 
     #[test]
@@ -247,6 +249,9 @@ mod tenant_crud_tests {
         });
 
         // Should have empty/missing fields
-        assert!(invalid_msg["data"]["tenant_id"].as_str().unwrap_or("").is_empty());
+        assert!(invalid_msg["data"]["tenant_id"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty());
     }
 }
