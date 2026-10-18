@@ -173,6 +173,18 @@ impl LocalMap {
         self.view.as_mut_ptr()
     }
 
+    /// Write into the caller's view (what the program itself does). False when out of bounds.
+    pub fn write_view(&mut self, offset: u64, bytes: &[u8]) -> bool {
+        let Some(end) = offset.checked_add(bytes.len() as u64) else {
+            return false;
+        };
+        if end > self.view.len() as u64 {
+            return false;
+        }
+        self.view[offset as usize..end as usize].copy_from_slice(bytes);
+        true
+    }
+
     /// Apply an inbound range through the SDK-only alias; the view sees it, the trap does not.
     pub fn apply_inbound(&mut self, offset: u64, bytes: &[u8]) -> bool {
         let Some(end) = offset.checked_add(bytes.len() as u64) else {

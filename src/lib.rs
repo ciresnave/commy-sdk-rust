@@ -42,6 +42,7 @@ pub mod file_accessor;
 pub mod local_map;
 pub mod message;
 pub mod service;
+pub mod shared_file;
 pub mod state;
 pub mod virtual_file;
 pub mod watcher;
