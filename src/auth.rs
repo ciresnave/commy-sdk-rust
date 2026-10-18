@@ -1,7 +1,7 @@
 //! Authentication utilities
 
-use crate::Result;
 pub use crate::message::AuthCredentials;
+use crate::Result;
 
 /// Authentication context for a session
 #[derive(Debug, Clone)]

@@ -42,10 +42,7 @@ impl LocalFileAccessor {
         let mmap = mmap.make_read_only()?;
         // Note: mmap keeps the file open via its file descriptor
 
-        Ok(Self {
-            file_path,
-            mmap,
-        })
+        Ok(Self { file_path, mmap })
     }
 
     /// Get file path
@@ -66,9 +63,9 @@ impl FileAccessor for LocalFileAccessor {
         let end = (offset + size) as usize;
 
         if end > self.mmap.len() {
-            return Err(crate::error::CommyError::InvalidOffset(
-                format!("Read extends beyond file bounds"),
-            ));
+            return Err(crate::error::CommyError::InvalidOffset(format!(
+                "Read extends beyond file bounds"
+            )));
         }
 
         Ok(self.mmap[start..end].to_vec())
@@ -131,9 +128,9 @@ impl FileAccessor for RemoteFileAccessor {
         let end = (offset + size) as usize;
 
         if end > buf.len() {
-            return Err(crate::error::CommyError::InvalidOffset(
-                format!("Read extends beyond buffer bounds"),
-            ));
+            return Err(crate::error::CommyError::InvalidOffset(format!(
+                "Read extends beyond buffer bounds"
+            )));
         }
 
         Ok(buf[start..end].to_vec())
@@ -194,10 +191,7 @@ mod tests {
         let accessor = RemoteFileAccessor::new();
         accessor.update_buffer(vec![0; 8]).await.unwrap();
 
-        accessor
-            .write_bytes(2, &[99, 88, 77])
-            .await
-            .unwrap();
+        accessor.write_bytes(2, &[99, 88, 77]).await.unwrap();
 
         let data = accessor.read_bytes(0, 8).await.unwrap();
         assert_eq!(data, vec![0, 0, 99, 88, 77, 0, 0, 0]);
@@ -359,6 +353,10 @@ mod tests {
         std::fs::write(&path, &content).unwrap();
         let accessor = LocalFileAccessor::new(path.into()).await.unwrap();
         let bytes = accessor.read_bytes(4, 4).await.unwrap();
-        assert_eq!(bytes, vec![50, 60, 70, 80], "read at exact boundary must return last 4 bytes");
+        assert_eq!(
+            bytes,
+            vec![50, 60, 70, 80],
+            "read at exact boundary must return last 4 bytes"
+        );
     }
 }

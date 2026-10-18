@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 
 /// Change event for a variable file
 #[derive(Debug, Clone)]
@@ -341,11 +341,19 @@ mod tests {
 
         // start_watching spawns a background task; should complete without error
         let start_result = watcher.start_watching().await;
-        assert!(start_result.is_ok(), "start_watching should succeed: {:?}", start_result);
+        assert!(
+            start_result.is_ok(),
+            "start_watching should succeed: {:?}",
+            start_result
+        );
 
         // Immediately stop — the background task should exit cleanly
         let stop_result = watcher.stop_watching().await;
-        assert!(stop_result.is_ok(), "stop_watching should succeed after start: {:?}", stop_result);
+        assert!(
+            stop_result.is_ok(),
+            "stop_watching should succeed after start: {:?}",
+            stop_result
+        );
 
         // No events should be pending
         assert!(watcher.try_next_change().await.is_none());
@@ -359,23 +367,19 @@ mod tests {
     /// A non-.mem file path is silently skipped (returns Ok, emits no events).
     #[tokio::test]
     async fn test_handle_file_change_skips_non_mem_extension() {
-        use std::path::PathBuf;
-        use tokio::sync::mpsc;
         use std::collections::HashMap;
-        use tokio::sync::RwLock;
+        use std::path::PathBuf;
         use std::sync::Arc;
+        use tokio::sync::mpsc;
+        use tokio::sync::RwLock;
 
         let (tx, mut rx) = mpsc::unbounded_channel::<FileChangeEvent>();
         let virtual_files = Arc::new(RwLock::new(HashMap::new()));
 
         let non_mem_path = PathBuf::from("/tmp/commy_test_skip/config.json");
 
-        let result = VariableFileWatcher::handle_file_change(
-            &non_mem_path,
-            &tx,
-            &virtual_files,
-        )
-        .await;
+        let result =
+            VariableFileWatcher::handle_file_change(&non_mem_path, &tx, &virtual_files).await;
 
         // No error — non-.mem files are silently ignored
         assert!(
@@ -395,18 +399,16 @@ mod tests {
     /// registered in the virtual_files map must produce Ok() and no event.
     #[tokio::test]
     async fn test_handle_file_change_skips_unregistered_service() {
-        use std::path::PathBuf;
-        use tokio::sync::mpsc;
-        use std::collections::HashMap;
-        use tokio::sync::RwLock;
-        use std::sync::Arc;
         use crate::virtual_file::VirtualVariableFile;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+        use tokio::sync::mpsc;
+        use tokio::sync::RwLock;
 
         let dir = tempfile::tempdir().unwrap();
         let service_id = "unknown_service_abc123";
-        let file_path = dir
-            .path()
-            .join(format!("service_{}.mem", service_id));
+        let file_path = dir.path().join(format!("service_{}.mem", service_id));
 
         // Create the .mem file with some content so tokio::fs::read succeeds
         std::fs::write(&file_path, b"some_content_here").unwrap();
@@ -416,12 +418,7 @@ mod tests {
         let virtual_files: Arc<RwLock<HashMap<String, Arc<VirtualVariableFile>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
-        let result = VariableFileWatcher::handle_file_change(
-            &file_path,
-            &tx,
-            &virtual_files,
-        )
-        .await;
+        let result = VariableFileWatcher::handle_file_change(&file_path, &tx, &virtual_files).await;
 
         assert!(
             result.is_ok(),
@@ -438,12 +435,12 @@ mod tests {
     /// detect the diff and emit a `FileChangeEvent` on the channel.
     #[tokio::test]
     async fn test_handle_file_change_registered_service_emits_event() {
+        use crate::virtual_file::{VariableMetadata, VirtualVariableFile};
+        use std::collections::HashMap;
         use std::path::PathBuf;
         use std::sync::Arc;
         use tokio::sync::mpsc;
-        use std::collections::HashMap;
         use tokio::sync::RwLock;
-        use crate::virtual_file::{VirtualVariableFile, VariableMetadata};
 
         let dir = tempfile::tempdir().unwrap();
         let service_id = "evt_test_svc";
@@ -479,16 +476,17 @@ mod tests {
 
         let (tx, mut rx) = mpsc::unbounded_channel::<FileChangeEvent>();
 
-        let result = VariableFileWatcher::handle_file_change(
-            &file_path,
-            &tx,
-            &virtual_files,
-        )
-        .await;
+        let result = VariableFileWatcher::handle_file_change(&file_path, &tx, &virtual_files).await;
 
-        assert!(result.is_ok(), "handle_file_change should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "handle_file_change should succeed: {:?}",
+            result
+        );
 
-        let event = rx.try_recv().expect("A FileChangeEvent should have been emitted");
+        let event = rx
+            .try_recv()
+            .expect("A FileChangeEvent should have been emitted");
         assert_eq!(event.service_id, service_id, "service_id mismatch");
         assert!(
             !event.changed_variables.is_empty() || !event.byte_ranges.is_empty(),

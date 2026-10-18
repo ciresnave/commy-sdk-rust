@@ -198,12 +198,12 @@ impl Client {
 
                     Ok(auth_context)
                 }
-                Ok(Ok(Some(ServerMessage::AuthenticationResult { success: false, message, .. }))) => {
-                    Err(CommyError::AuthenticationFailed(message))
-                }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
-                    Err(CommyError::from(code))
-                }
+                Ok(Ok(Some(ServerMessage::AuthenticationResult {
+                    success: false,
+                    message,
+                    ..
+                }))) => Err(CommyError::AuthenticationFailed(message)),
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
                 Err(_) => Err(CommyError::Timeout),
                 _ => Err(CommyError::Timeout),
             }
@@ -338,9 +338,11 @@ impl Client {
         if let Some(conn) = &*self.connection.read().await {
             match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
                 Ok(Ok(Some(ServerMessage::Result { success: true, .. }))) => Ok(()),
-                Ok(Ok(Some(ServerMessage::Result { success: false, message, .. }))) => {
-                    Err(CommyError::PermissionDenied(message))
-                }
+                Ok(Ok(Some(ServerMessage::Result {
+                    success: false,
+                    message,
+                    ..
+                }))) => Err(CommyError::PermissionDenied(message)),
                 Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
                 Err(_) => Err(CommyError::Timeout),
                 _ => Err(CommyError::Timeout),
@@ -377,9 +379,11 @@ impl Client {
                     tenant_id: returned_id,
                     ..
                 }))) => Ok(returned_id),
-                Ok(Ok(Some(ServerMessage::TenantResult { success: false, message, .. }))) => {
-                    Err(CommyError::PermissionDenied(message))
-                }
+                Ok(Ok(Some(ServerMessage::TenantResult {
+                    success: false,
+                    message,
+                    ..
+                }))) => Err(CommyError::PermissionDenied(message)),
                 Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
                 Err(_) => Err(CommyError::Timeout),
                 _ => Err(CommyError::Timeout),
@@ -412,9 +416,11 @@ impl Client {
         if let Some(conn) = &*self.connection.read().await {
             match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
                 Ok(Ok(Some(ServerMessage::Result { success: true, .. }))) => Ok(()),
-                Ok(Ok(Some(ServerMessage::Result { success: false, message, .. }))) => {
-                    Err(CommyError::PermissionDenied(message))
-                }
+                Ok(Ok(Some(ServerMessage::Result {
+                    success: false,
+                    message,
+                    ..
+                }))) => Err(CommyError::PermissionDenied(message)),
                 Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
                 Err(_) => Err(CommyError::Timeout),
                 _ => Err(CommyError::Timeout),
@@ -826,7 +832,10 @@ mod tests {
     #[tokio::test]
     async fn test_connection_state_initially_disconnected() {
         let client = Client::new("wss://localhost:9000");
-        assert_eq!(client.connection_state().await, ConnectionState::Disconnected);
+        assert_eq!(
+            client.connection_state().await,
+            ConnectionState::Disconnected
+        );
     }
 
     #[tokio::test]
@@ -854,7 +863,11 @@ mod tests {
     async fn test_init_file_watcher_succeeds() {
         let client = Client::new("wss://localhost:9000");
         let result = client.init_file_watcher().await;
-        assert!(result.is_ok(), "init_file_watcher should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "init_file_watcher should succeed: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -862,10 +875,18 @@ mod tests {
         let client = Client::new("wss://localhost:9000");
         // First call initialises the watcher
         let r1 = client.start_file_monitoring().await;
-        assert!(r1.is_ok(), "first start_file_monitoring should succeed: {:?}", r1);
+        assert!(
+            r1.is_ok(),
+            "first start_file_monitoring should succeed: {:?}",
+            r1
+        );
         // Second call is a no-op (watcher already exists)
         let r2 = client.start_file_monitoring().await;
-        assert!(r2.is_ok(), "second start_file_monitoring should also succeed: {:?}", r2);
+        assert!(
+            r2.is_ok(),
+            "second start_file_monitoring should also succeed: {:?}",
+            r2
+        );
         let _ = client.stop_file_monitoring().await;
     }
 
@@ -916,7 +937,11 @@ mod tests {
 
         // Stop the watcher
         let stop_result = client.stop_file_monitoring().await;
-        assert!(stop_result.is_ok(), "stop_file_monitoring should succeed: {:?}", stop_result);
+        assert!(
+            stop_result.is_ok(),
+            "stop_file_monitoring should succeed: {:?}",
+            stop_result
+        );
 
         // After stopping, the watcher slot is None ⇒ try_get returns InvalidState
         let after = client.try_get_file_change().await;
@@ -943,7 +968,10 @@ mod tests {
             .await
             .expect("should return cached virtual service file");
 
-        assert!(Arc::ptr_eq(&vf1, &vf2), "second call should return the cached VirtualVariableFile");
+        assert!(
+            Arc::ptr_eq(&vf1, &vf2),
+            "second call should return the cached VirtualVariableFile"
+        );
 
         // Different service name → different file
         let vf3 = client
@@ -951,7 +979,10 @@ mod tests {
             .await
             .expect("should create a separate virtual service file");
 
-        assert!(!Arc::ptr_eq(&vf1, &vf3), "different service should be a separate file");
+        assert!(
+            !Arc::ptr_eq(&vf1, &vf3),
+            "different service should be a separate file"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1014,7 +1045,10 @@ mod tests {
     async fn setup_client_with_mock_response(
         tenant_id: &str,
         response: crate::message::ServerMessage,
-    ) -> (Client, tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>) {
+    ) -> (
+        Client,
+        tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>,
+    ) {
         let client = Client::new("wss://test");
         let (conn, server_tx, client_rx) = crate::connection::Connection::new_for_test();
         // Pre-load the server-side response channel BEFORE injecting
@@ -1034,7 +1068,10 @@ mod tests {
         };
         let (client, _client_rx) = setup_client_with_mock_response("tenant_a", err_response).await;
         let result = client.create_service("tenant_a", "missing_svc").await;
-        assert!(result.is_err(), "create_service must fail on Error response");
+        assert!(
+            result.is_err(),
+            "create_service must fail on Error response"
+        );
         match result.unwrap_err() {
             CommyError::NotFound(_) => {} // Correct: server error is properly translated
             CommyError::Timeout => panic!(
@@ -1117,9 +1154,9 @@ mod tests {
                     msg
                 );
             }
-            CommyError::Timeout => panic!(
-                "authenticate success=false was silently converted to Timeout"
-            ),
+            CommyError::Timeout => {
+                panic!("authenticate success=false was silently converted to Timeout")
+            }
             e => panic!("Unexpected error: {:?}", e),
         }
     }
@@ -1161,7 +1198,10 @@ mod tests {
         client.inject_connection_for_test(conn).await;
 
         // Preconditions
-        assert!(client.is_connected().await, "must be connected before disconnect");
+        assert!(
+            client.is_connected().await,
+            "must be connected before disconnect"
+        );
         assert!(
             client.is_authenticated_to("tenant_a").await,
             "must be authenticated before disconnect"
@@ -1171,7 +1211,10 @@ mod tests {
         assert!(result.is_ok(), "disconnect should succeed: {:?}", result);
 
         // Post-conditions
-        assert!(!client.is_connected().await, "connection must be cleared after disconnect");
+        assert!(
+            !client.is_connected().await,
+            "connection must be cleared after disconnect"
+        );
         assert!(
             !client.is_authenticated_to("tenant_a").await,
             "auth must be cleared after disconnect"
@@ -1252,7 +1295,10 @@ mod tests {
     async fn test_read_variable_when_disconnected_returns_connection_lost() {
         let client = Client::new("wss://localhost:9999");
         let result = client.read_variable("svc_id", "var_name").await;
-        assert!(result.is_err(), "read_variable with no connection must fail");
+        assert!(
+            result.is_err(),
+            "read_variable with no connection must fail"
+        );
         assert!(
             matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
             "Expected ConnectionLost"
@@ -1262,8 +1308,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_write_variable_when_disconnected_returns_connection_lost() {
         let client = Client::new("wss://localhost:9999");
-        let result = client.write_variable("svc_id", "var_name", vec![1, 2, 3]).await;
-        assert!(result.is_err(), "write_variable with no connection must fail");
+        let result = client
+            .write_variable("svc_id", "var_name", vec![1, 2, 3])
+            .await;
+        assert!(
+            result.is_err(),
+            "write_variable with no connection must fail"
+        );
         assert!(
             matches!(result.unwrap_err(), CommyError::ConnectionLost(_)),
             "Expected ConnectionLost"
@@ -1329,7 +1380,9 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             CommyError::Unauthorized(_) => {}
-            CommyError::Timeout => panic!("Bug: Error{{Unauthorized}} was silently converted to Timeout"),
+            CommyError::Timeout => {
+                panic!("Bug: Error{{Unauthorized}} was silently converted to Timeout")
+            }
             e => panic!("Expected Unauthorized, got {:?}", e),
         }
     }
@@ -1429,7 +1482,10 @@ mod tests {
             "is_authenticated_to must return true for the authenticated tenant"
         );
         assert!(
-            client.authenticated_tenants().await.contains(&"tenant_a".to_string()),
+            client
+                .authenticated_tenants()
+                .await
+                .contains(&"tenant_a".to_string()),
             "authenticated_tenants() must list the tenant"
         );
     }
@@ -1439,9 +1495,10 @@ mod tests {
     // Useful for write_variable / subscribe / unsubscribe / heartbeat, which
     // either don't wait for a response or handle a missing response gracefully.
     // ─────────────────────────────────────────────────────────────────────────
-    async fn client_with_injected_connection()
-    -> (Client, tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>)
-    {
+    async fn client_with_injected_connection() -> (
+        Client,
+        tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>,
+    ) {
         let client = Client::new("wss://test");
         let (conn, _server_tx, client_rx) = crate::connection::Connection::new_for_test();
         // _server_tx dropped intentionally: these tests never pre-load a response.
@@ -1455,22 +1512,36 @@ mod tests {
     #[tokio::test]
     async fn test_write_variable_with_connection_succeeds() {
         let (client, _rx) = client_with_injected_connection().await;
-        let result = client.write_variable("svc_1", "temp", vec![1, 2, 3, 4]).await;
-        assert!(result.is_ok(), "write_variable with connection must return Ok: {:?}", result);
+        let result = client
+            .write_variable("svc_1", "temp", vec![1, 2, 3, 4])
+            .await;
+        assert!(
+            result.is_ok(),
+            "write_variable with connection must return Ok: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
     async fn test_subscribe_with_connection_succeeds() {
         let (client, _rx) = client_with_injected_connection().await;
         let result = client.subscribe("svc_1", "temp").await;
-        assert!(result.is_ok(), "subscribe with connection must return Ok: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "subscribe with connection must return Ok: {:?}",
+            result
+        );
     }
 
     #[tokio::test]
     async fn test_unsubscribe_with_connection_succeeds() {
         let (client, _rx) = client_with_injected_connection().await;
         let result = client.unsubscribe("svc_1", "temp").await;
-        assert!(result.is_ok(), "unsubscribe with connection must return Ok: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "unsubscribe with connection must return Ok: {:?}",
+            result
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1494,7 +1565,11 @@ mod tests {
         // returns Ok(()).  start_paused makes the 10-s timeout instant.
         let (client, _rx) = client_with_injected_connection().await;
         let result = client.heartbeat().await;
-        assert!(result.is_ok(), "heartbeat with connection must return Ok: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "heartbeat with connection must return Ok: {:?}",
+            result
+        );
     }
 
     // ── success paths for methods that wait for a server response ─────────────
@@ -1514,7 +1589,11 @@ mod tests {
         .await;
         let result = client.read_variable("svc_1", "temp").await;
         assert!(result.is_ok(), "read_variable must succeed: {:?}", result);
-        assert_eq!(result.unwrap(), expected, "returned bytes must match pre-loaded data");
+        assert_eq!(
+            result.unwrap(),
+            expected,
+            "returned bytes must match pre-loaded data"
+        );
     }
 
     #[tokio::test]
@@ -1611,9 +1690,15 @@ mod tests {
             .write_variable("svc_xyz", "temperature", vec![42u8, 43u8, 44u8])
             .await
             .unwrap();
-        let sent = client_rx.try_recv().expect("write_variable must enqueue a ClientMessage");
+        let sent = client_rx
+            .try_recv()
+            .expect("write_variable must enqueue a ClientMessage");
         match sent {
-            ClientMessage::WriteVariable { service_id, variable_name, data } => {
+            ClientMessage::WriteVariable {
+                service_id,
+                variable_name,
+                data,
+            } => {
                 assert_eq!(service_id, "svc_xyz", "service_id mismatch");
                 assert_eq!(variable_name, "temperature", "variable_name mismatch");
                 assert_eq!(data, vec![42u8, 43u8, 44u8], "data mismatch");
@@ -1627,9 +1712,14 @@ mod tests {
         use crate::message::ClientMessage;
         let (client, mut client_rx) = client_with_injected_connection().await;
         client.subscribe("svc_xyz", "pressure").await.unwrap();
-        let sent = client_rx.try_recv().expect("subscribe must enqueue a ClientMessage");
+        let sent = client_rx
+            .try_recv()
+            .expect("subscribe must enqueue a ClientMessage");
         match sent {
-            ClientMessage::Subscribe { service_id, variable_name } => {
+            ClientMessage::Subscribe {
+                service_id,
+                variable_name,
+            } => {
                 assert_eq!(service_id, "svc_xyz", "service_id mismatch");
                 assert_eq!(variable_name, "pressure", "variable_name mismatch");
             }
@@ -1642,9 +1732,14 @@ mod tests {
         use crate::message::ClientMessage;
         let (client, mut client_rx) = client_with_injected_connection().await;
         client.unsubscribe("svc_xyz", "pressure").await.unwrap();
-        let sent = client_rx.try_recv().expect("unsubscribe must enqueue a ClientMessage");
+        let sent = client_rx
+            .try_recv()
+            .expect("unsubscribe must enqueue a ClientMessage");
         match sent {
-            ClientMessage::Unsubscribe { service_id, variable_name } => {
+            ClientMessage::Unsubscribe {
+                service_id,
+                variable_name,
+            } => {
                 assert_eq!(service_id, "svc_xyz", "service_id mismatch");
                 assert_eq!(variable_name, "pressure", "variable_name mismatch");
             }

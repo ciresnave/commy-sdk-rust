@@ -347,7 +347,9 @@ mod tests {
         let msg = ClientMessage::Authenticate {
             tenant_id: "tenant1".to_string(),
             client_version: "0.1.0".to_string(),
-            credentials: AuthCredentials::ApiKey { key: "secret".to_string() },
+            credentials: AuthCredentials::ApiKey {
+                key: "secret".to_string(),
+            },
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
@@ -356,7 +358,9 @@ mod tests {
 
     #[test]
     fn test_client_message_heartbeat_serialization() {
-        let msg = ClientMessage::Heartbeat { client_id: "c1".to_string() };
+        let msg = ClientMessage::Heartbeat {
+            client_id: "c1".to_string(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
         assert!(matches!(decoded, ClientMessage::Heartbeat { .. }));
@@ -372,7 +376,10 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
-        assert!(matches!(decoded, ServerMessage::AuthenticationResult { success: true, .. }));
+        assert!(matches!(
+            decoded,
+            ServerMessage::AuthenticationResult { success: true, .. }
+        ));
     }
 
     #[test]
@@ -391,7 +398,9 @@ mod tests {
 
     #[test]
     fn test_auth_credentials_variants_serialization() {
-        let jwt = AuthCredentials::Jwt { token: "tok".to_string() };
+        let jwt = AuthCredentials::Jwt {
+            token: "tok".to_string(),
+        };
         let json = serde_json::to_string(&jwt).unwrap();
         assert!(json.contains("jwt"));
 
@@ -430,7 +439,10 @@ mod tests {
             tenant_name: "Tenant One".to_string(),
         };
         match round_trip_client(msg) {
-            ClientMessage::CreateTenant { tenant_id, tenant_name } => {
+            ClientMessage::CreateTenant {
+                tenant_id,
+                tenant_name,
+            } => {
                 assert_eq!(tenant_id, "t1");
                 assert_eq!(tenant_name, "Tenant One");
             }
@@ -440,7 +452,9 @@ mod tests {
 
     #[test]
     fn test_client_message_delete_tenant_round_trip() {
-        let msg = ClientMessage::DeleteTenant { tenant_id: "t2".to_string() };
+        let msg = ClientMessage::DeleteTenant {
+            tenant_id: "t2".to_string(),
+        };
         match round_trip_client(msg) {
             ClientMessage::DeleteTenant { tenant_id } => assert_eq!(tenant_id, "t2"),
             _ => panic!("Wrong variant"),
@@ -456,7 +470,11 @@ mod tests {
             initial_data: initial.clone(),
         };
         match round_trip_client(msg) {
-            ClientMessage::AllocateVariable { service_id, variable_name, initial_data } => {
+            ClientMessage::AllocateVariable {
+                service_id,
+                variable_name,
+                initial_data,
+            } => {
                 assert_eq!(service_id, "svc1");
                 assert_eq!(variable_name, "counter");
                 assert_eq!(initial_data, initial);
@@ -472,7 +490,10 @@ mod tests {
             variable_name: "counter".to_string(),
         };
         match round_trip_client(msg) {
-            ClientMessage::ReadVariable { service_id, variable_name } => {
+            ClientMessage::ReadVariable {
+                service_id,
+                variable_name,
+            } => {
                 assert_eq!(service_id, "svc1");
                 assert_eq!(variable_name, "counter");
             }
@@ -489,7 +510,11 @@ mod tests {
             data: data.clone(),
         };
         match round_trip_client(msg) {
-            ClientMessage::WriteVariable { service_id, variable_name, data: d } => {
+            ClientMessage::WriteVariable {
+                service_id,
+                variable_name,
+                data: d,
+            } => {
                 assert_eq!(service_id, "svc2");
                 assert_eq!(variable_name, "temp");
                 assert_eq!(d, data);
@@ -505,7 +530,10 @@ mod tests {
             variable_name: "old_var".to_string(),
         };
         match round_trip_client(msg) {
-            ClientMessage::DeallocateVariable { service_id, variable_name } => {
+            ClientMessage::DeallocateVariable {
+                service_id,
+                variable_name,
+            } => {
                 assert_eq!(service_id, "svc3");
                 assert_eq!(variable_name, "old_var");
             }
@@ -520,7 +548,10 @@ mod tests {
             variable_name: "level".to_string(),
         };
         match round_trip_client(msg) {
-            ClientMessage::Subscribe { service_id, variable_name } => {
+            ClientMessage::Subscribe {
+                service_id,
+                variable_name,
+            } => {
                 assert_eq!(service_id, "svc4");
                 assert_eq!(variable_name, "level");
             }
@@ -535,7 +566,10 @@ mod tests {
             variable_name: "level".to_string(),
         };
         match round_trip_client(msg) {
-            ClientMessage::Unsubscribe { service_id, variable_name } => {
+            ClientMessage::Unsubscribe {
+                service_id,
+                variable_name,
+            } => {
                 assert_eq!(service_id, "svc5");
                 assert_eq!(variable_name, "level");
             }
@@ -545,7 +579,9 @@ mod tests {
 
     #[test]
     fn test_client_message_disconnect_round_trip() {
-        let msg = ClientMessage::Disconnect { client_id: "cli_99".to_string() };
+        let msg = ClientMessage::Disconnect {
+            client_id: "cli_99".to_string(),
+        };
         match round_trip_client(msg) {
             ClientMessage::Disconnect { client_id } => assert_eq!(client_id, "cli_99"),
             _ => panic!("Wrong variant"),
@@ -559,7 +595,10 @@ mod tests {
             service_name: "cache".to_string(),
         };
         match round_trip_client(msg) {
-            ClientMessage::GetServiceFilePath { tenant_id, service_name } => {
+            ClientMessage::GetServiceFilePath {
+                tenant_id,
+                service_name,
+            } => {
                 assert_eq!(tenant_id, "t1");
                 assert_eq!(service_name, "cache");
             }
@@ -600,7 +639,10 @@ mod tests {
             tenant_name: "Alpha Corp".to_string(),
         };
         match round_trip_server(msg) {
-            ServerMessage::Tenant { tenant_id, tenant_name } => {
+            ServerMessage::Tenant {
+                tenant_id,
+                tenant_name,
+            } => {
                 assert_eq!(tenant_id, "t1");
                 assert_eq!(tenant_name, "Alpha Corp");
             }
@@ -616,7 +658,11 @@ mod tests {
             message: "Tenant created".to_string(),
         };
         match round_trip_server(msg) {
-            ServerMessage::TenantResult { success, tenant_id, message } => {
+            ServerMessage::TenantResult {
+                success,
+                tenant_id,
+                message,
+            } => {
                 assert!(success);
                 assert_eq!(tenant_id, "t2");
                 assert_eq!(message, "Tenant created");
@@ -635,7 +681,12 @@ mod tests {
             version: 42,
         };
         match round_trip_server(msg) {
-            ServerMessage::VariableData { service_id, variable_name, data: d, version } => {
+            ServerMessage::VariableData {
+                service_id,
+                variable_name,
+                data: d,
+                version,
+            } => {
                 assert_eq!(service_id, "svc1");
                 assert_eq!(variable_name, "x");
                 assert_eq!(d, data);
@@ -655,7 +706,12 @@ mod tests {
             version: 7,
         };
         match round_trip_server(msg) {
-            ServerMessage::VariableChanged { service_id, variable_name, data: d, version } => {
+            ServerMessage::VariableChanged {
+                service_id,
+                variable_name,
+                data: d,
+                version,
+            } => {
                 assert_eq!(service_id, "svc2");
                 assert_eq!(variable_name, "y");
                 assert_eq!(d, data);
@@ -667,7 +723,9 @@ mod tests {
 
     #[test]
     fn test_server_message_disconnected_round_trip() {
-        let msg = ServerMessage::Disconnected { reason: "server shutdown".to_string() };
+        let msg = ServerMessage::Disconnected {
+            reason: "server shutdown".to_string(),
+        };
         match round_trip_server(msg) {
             ServerMessage::Disconnected { reason } => {
                 assert_eq!(reason, "server shutdown");
@@ -684,7 +742,11 @@ mod tests {
             file_size: 1_048_576,
         };
         match round_trip_server(msg) {
-            ServerMessage::ServiceFilePath { service_id, file_path, file_size } => {
+            ServerMessage::ServiceFilePath {
+                service_id,
+                file_path,
+                file_size,
+            } => {
                 assert_eq!(service_id, "svc7");
                 assert_eq!(file_path, "/var/commy/service.mem");
                 assert_eq!(file_size, 1_048_576);
@@ -700,7 +762,10 @@ mod tests {
             changed_variables: vec!["a".to_string(), "b".to_string()],
         };
         match round_trip_server(msg) {
-            ServerMessage::VariableChangesAcknowledged { service_id, changed_variables } => {
+            ServerMessage::VariableChangesAcknowledged {
+                service_id,
+                changed_variables,
+            } => {
                 assert_eq!(service_id, "svc8");
                 assert_eq!(changed_variables, vec!["a".to_string(), "b".to_string()]);
             }
@@ -710,7 +775,9 @@ mod tests {
 
     #[test]
     fn test_server_message_heartbeat_round_trip() {
-        let msg = ServerMessage::Heartbeat { timestamp: "2025-01-01T00:00:00Z".to_string() };
+        let msg = ServerMessage::Heartbeat {
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
+        };
         match round_trip_server(msg) {
             ServerMessage::Heartbeat { timestamp } => {
                 assert_eq!(timestamp, "2025-01-01T00:00:00Z");
@@ -727,7 +794,11 @@ mod tests {
             message: "Operation completed".to_string(),
         };
         match round_trip_server(msg) {
-            ServerMessage::Result { request_id, success, message } => {
+            ServerMessage::Result {
+                request_id,
+                success,
+                message,
+            } => {
                 assert_eq!(request_id, "req-42");
                 assert!(success);
                 assert_eq!(message, "Operation completed");
