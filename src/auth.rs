@@ -1,6 +1,6 @@
 //! Authentication utilities
 
-pub use crate::message::AuthCredentials;
+pub use crate::message::{AuthCredentials, Secret};
 use crate::Result;
 
 /// Authentication context for a session
@@ -39,17 +39,22 @@ impl AuthContext {
 
 /// Build API key authentication
 pub fn api_key(key: String) -> AuthCredentials {
-    AuthCredentials::ApiKey { key }
+    AuthCredentials::ApiKey { key: key.into() }
 }
 
 /// Build JWT authentication
 pub fn jwt(token: String) -> AuthCredentials {
-    AuthCredentials::Jwt { token }
+    AuthCredentials::Jwt {
+        token: token.into(),
+    }
 }
 
 /// Build basic authentication
 pub fn basic(username: String, password: String) -> AuthCredentials {
-    AuthCredentials::Basic { username, password }
+    AuthCredentials::Basic {
+        username,
+        password: password.into(),
+    }
 }
 
 /// Validate a token format (basic validation)
@@ -101,7 +106,7 @@ mod tests {
     fn test_api_key_credentials() {
         let creds = api_key("my_key_123".to_string());
         match creds {
-            AuthCredentials::ApiKey { key } => assert_eq!(key, "my_key_123"),
+            AuthCredentials::ApiKey { key } => assert_eq!(key.expose(), "my_key_123"),
             _ => panic!("Expected ApiKey variant"),
         }
     }
@@ -110,7 +115,7 @@ mod tests {
     fn test_jwt_credentials() {
         let creds = jwt("my.jwt.token".to_string());
         match creds {
-            AuthCredentials::Jwt { token } => assert_eq!(token, "my.jwt.token"),
+            AuthCredentials::Jwt { token } => assert_eq!(token.expose(), "my.jwt.token"),
             _ => panic!("Expected Jwt variant"),
         }
     }
@@ -121,7 +126,7 @@ mod tests {
         match creds {
             AuthCredentials::Basic { username, password } => {
                 assert_eq!(username, "user");
-                assert_eq!(password, "pass");
+                assert_eq!(password.expose(), "pass");
             }
             _ => panic!("Expected Basic variant"),
         }
