@@ -39,6 +39,7 @@ pub mod connection;
 pub mod error;
 pub mod examples_support;
 pub mod file_accessor;
+pub mod local_map;
 pub mod message;
 pub mod service;
 pub mod state;
