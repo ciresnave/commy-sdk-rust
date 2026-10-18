@@ -11,7 +11,7 @@ named; **UNVERIFIED** means nobody has run it (no assumption is made either way)
 | Windows x86_64 MSVC (windows-latest) | TESTED | CI `test (windows-latest)`; also the lane's local runs |
 | macOS Apple Silicon (macos-latest) | TESTED | CI `test (macos-latest)` |
 | Linux x86_64 glibc, Docker rust:bookworm | TESTED | local run before each PR (not CI) |
-| MSRV 1.89 | TESTED (compile only) | CI `MSRV` job: `cargo check --all-targets --all-features` on ubuntu |
+| MSRV 1.94 | TESTED (compile only) | CI `MSRV` job: `cargo check --all-targets --all-features` on ubuntu |
 | Linux musl, aarch64 Linux, Windows arm64, macOS Intel, FreeBSD and other BSDs, 32-bit targets | UNVERIFIED | no job, no local run |
 
 CI also runs `cargo fmt --check`, `clippy -D warnings`, `cargo doc` (warnings denied) and `cargo deny`
@@ -35,5 +35,5 @@ CI also runs `cargo fmt --check`, `clippy -D warnings`, `cargo doc` (warnings de
 ```
 cargo test --all-features --no-fail-fast
 docker run --rm -v "$PWD:/src:ro" -w /src -e CARGO_TARGET_DIR=/tmp/t rust:bookworm cargo test --all-features --no-fail-fast
-cargo +1.89.0 check --all-targets --all-features
+cargo +1.94.0 check --all-targets --all-features
 ```

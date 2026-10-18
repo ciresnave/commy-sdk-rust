@@ -74,6 +74,15 @@ fn read_nonce(path: &Path) -> Result<String, FallbackReason> {
     Ok(buf)
 }
 
+/// What the local-mapping handshake produced for one service.
+#[derive(Debug)]
+pub struct NegotiatedFile {
+    /// The id range frames use for this service.
+    pub file_id: u32,
+    /// The confirmed local mapping, or `None` to stay on WSS ranges.
+    pub local: Option<LocalMap>,
+}
+
 /// The result of trying to enter local mode.
 pub enum LocalMapOutcome {
     Local(Box<LocalMap>),
