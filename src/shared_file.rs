@@ -9,7 +9,7 @@
 
 use crate::local_map::LocalMap;
 use commy_wire::{ByteRange, RangeFrame, RangesUpdated, MAX_RANGES_PER_MESSAGE};
-use dirty_ranges::Scanner;
+use dirty_ranges::{Mode, Range, Region, Scanner};
 
 /// Why an inbound frame was not applied.
 #[derive(Debug, PartialEq, Eq)]
@@ -81,10 +81,37 @@ fn write_into(buf: &mut [u8], offset: u64, bytes: &[u8]) -> bool {
     true
 }
 
+/// Why the write trap could not be armed.
+#[derive(Debug)]
+pub enum TrapError {
+    /// Only a file mapped from the server can be trapped.
+    NotLocal,
+    /// The trap is already armed.
+    AlreadyArmed,
+    /// The mapping is smaller than one OS page.
+    TooSmall,
+    /// The trap is not armed.
+    NotArmed,
+    /// dirty-ranges refused (alignment, registry full, OS error).
+    Region(dirty_ranges::Error),
+}
+
+/// The write trap over the whole pages of a mapped file.
+struct Trap {
+    region: Region,
+    /// Bytes the region covers: the mapping rounded down to whole OS pages.
+    region_len: usize,
+}
+
 /// A file's bytes plus the baseline that makes its changes visible.
 pub struct SharedFile {
+    // Declared before `map` so the trap is released (pages unprotected) before the mapping goes.
+    trap: Option<Trap>,
     map: Backing,
+    /// Baseline for the bytes the trap does not cover (all of them when there is no trap).
     scanner: Scanner,
+    /// Offset of the first byte `scanner` tracks.
+    scan_base: usize,
     file_id: u32,
     seq: u64,
     last_applied: u64,
@@ -97,8 +124,10 @@ impl SharedFile {
     pub fn new(map: LocalMap, file_id: u32) -> Self {
         let scanner = Scanner::new(map.view());
         Self {
+            trap: None,
             map: Backing::Mapped(map),
             scanner,
+            scan_base: 0,
             file_id,
             seq: 0,
             last_applied: 0,
@@ -112,14 +141,85 @@ impl SharedFile {
     pub fn from_snapshot(bytes: Vec<u8>, file_id: u32, seq: u64) -> Self {
         let scanner = Scanner::new(&bytes);
         Self {
+            trap: None,
             map: Backing::Heap(bytes),
             scanner,
+            scan_base: 0,
             file_id,
             seq,
             last_applied: seq,
             generation: 0,
             draining: false,
         }
+    }
+
+    /// Turn on the write trap: the whole pages of the mapping become read-only and the first write to
+    /// each page marks it dirty, so `commit` no longer reads every page. At most `pool_pages / 2` pages
+    /// are trapped (two baseline buffers each); the rest, and any partial last page, stay on the scan.
+    ///
+    /// # Safety
+    /// While armed: no thread may block `SIGSEGV`/`SIGBUS` while writing the mapping (Unix), and nothing
+    /// may read from the OS into the mapping (`read`, `recv`), which would fail with `EFAULT`. Writes
+    /// through [`SharedFile::write_range`] and [`SharedFile::as_mut_ptr`] are fine.
+    pub unsafe fn arm_trap(&mut self, pool_pages: usize) -> Result<(), TrapError> {
+        if self.trap.is_some() {
+            return Err(TrapError::AlreadyArmed);
+        }
+        let Backing::Mapped(m) = &mut self.map else {
+            return Err(TrapError::NotLocal);
+        };
+        let region_len = m.len() / page_size::get() * page_size::get();
+        if region_len == 0 {
+            return Err(TrapError::TooSmall);
+        }
+        let (base, alias) = (m.view_ptr(), m.alias_ptr());
+        // SAFETY: both pointers map the same file for `m.len() >= region_len` bytes, and `trap` drops
+        // before `map` (field order). The caller upholds the signal and OS-read contract.
+        let region = unsafe { Region::arm(base, region_len, pool_pages, Some(alias)) }
+            .map_err(TrapError::Region)?;
+        let base_off = region.armed_pages() * region.page_size();
+        // Trap is the only owner of the pages below `base_off` now; the scan keeps the rest.
+        self.scanner = Scanner::new(&self.map.view()[base_off..]);
+        self.scan_base = base_off;
+        self.trap = Some(Trap { region, region_len });
+        Ok(())
+    }
+
+    /// Switch whole pages (`range` in bytes, page aligned, inside the trapped pages) between trapped
+    /// writes and scanning. Scanned pages cost a read per commit but never fault. Nothing is lost.
+    pub fn set_page_mode(
+        &mut self,
+        range: std::ops::Range<usize>,
+        mode: Mode,
+    ) -> Result<(), TrapError> {
+        let t = self.trap.as_mut().ok_or(TrapError::NotArmed)?;
+        t.region.set_mode(range, mode).map_err(TrapError::Region)
+    }
+
+    /// Base pointer of the file's bytes for writing in place; `None` unless the file is mapped.
+    pub fn as_mut_ptr(&mut self) -> Option<*mut u8> {
+        match &mut self.map {
+            Backing::Mapped(m) => Some(m.view_ptr()),
+            Backing::Heap(_) => None,
+        }
+    }
+
+    /// Everything written since the last call: the trapped pages' dirty ranges plus the scan of the rest.
+    fn changed(&mut self) -> Vec<Range> {
+        let mut out = match self.trap.as_mut() {
+            Some(t) => t.region.flush(),
+            None => Vec::new(),
+        };
+        let base = self.scan_base;
+        let tail = self
+            .scanner
+            .scan(&self.map.view()[base..])
+            .expect("scanner and mapping have the same length");
+        out.extend(tail.into_iter().map(|r| Range {
+            offset: r.offset + base,
+            len: r.len,
+        }));
+        out
     }
 
     /// True when the bytes are a mapping shared with the server (changes travel as ranges only).
@@ -153,10 +253,7 @@ impl SharedFile {
     /// Unflushed local writes as `(offset, bytes)`, found by diffing against the baseline (which
     /// advances). Used to carry writes into the new file after a revocation.
     pub fn take_pending_writes(&mut self) -> Vec<(u64, Vec<u8>)> {
-        let changed = self
-            .scanner
-            .scan(self.map.view())
-            .expect("scanner and mapping have the same length");
+        let changed = self.changed();
         let view = self.map.view();
         changed
             .iter()
@@ -198,10 +295,7 @@ impl SharedFile {
     /// all sharing the current `seq`). Empty when nothing changed. The baseline advances.
     pub fn commit(&mut self) -> Vec<RangeFrame> {
         // The scanner was created for this mapping's length, so a length mismatch is impossible.
-        let changed = self
-            .scanner
-            .scan(self.map.view())
-            .expect("scanner and mapping have the same length");
+        let changed = self.changed();
         let view = self.map.view();
         changed
             .iter()
@@ -219,10 +313,7 @@ impl SharedFile {
     /// Local-mode commit: diff against the baseline and return the changed ranges, in messages of
     /// at most `MAX_RANGES_PER_MESSAGE` ranges. No data travels; the server reads the shared file.
     pub fn commit_local(&mut self) -> Vec<Vec<ByteRange>> {
-        let changed = self
-            .scanner
-            .scan(self.map.view())
-            .expect("scanner and mapping have the same length");
+        let changed = self.changed();
         changed
             .chunks(MAX_RANGES_PER_MESSAGE)
             .map(|c| {
@@ -253,8 +344,22 @@ impl SharedFile {
             if end > self.map.len() as u64 {
                 continue;
             }
-            let live = &self.map.view()[r.offset as usize..end as usize];
-            if self.scanner.apply_remote(r.offset as usize, live).is_ok() {
+            // Only the scanned part can be re-baselined from live bytes today; trapped pages need
+            // dirty-ranges `Region::rebaseline` (they report the range again, which is harmless).
+            let (start, end) = (r.offset as usize, end as usize);
+            let from = start.max(self.scan_base);
+            if from >= end {
+                if self.trap.is_some() {
+                    n += 1;
+                }
+                continue;
+            }
+            let live = &self.map.view()[from..end];
+            if self
+                .scanner
+                .apply_remote(from - self.scan_base, live)
+                .is_ok()
+            {
                 n += 1;
             }
         }
@@ -273,6 +378,29 @@ impl SharedFile {
         self.map.apply_inbound(offset, bytes)
     }
 
+    /// Write `bytes` through the alias and into whichever baseline covers each part. Bounds checked.
+    fn apply_bytes(&mut self, offset: usize, bytes: &[u8]) -> bool {
+        let region_len = self.trap.as_ref().map_or(0, |t| t.region_len);
+        let split = region_len.saturating_sub(offset).min(bytes.len());
+        if let (Some(t), true) = (self.trap.as_mut(), split > 0) {
+            if t.region.apply_remote(offset, &bytes[..split]).is_err() {
+                return false;
+            }
+        }
+        let rest_off = offset + split;
+        if split < bytes.len() && !self.map.apply_inbound(rest_off as u64, &bytes[split..]) {
+            return false;
+        }
+        // Baseline the part the scanner tracks (it starts at `scan_base`, never past `region_len`).
+        let from = offset.max(self.scan_base);
+        let end = offset + bytes.len();
+        from >= end
+            || self
+                .scanner
+                .apply_remote(from - self.scan_base, &bytes[from - offset..])
+                .is_ok()
+    }
+
     /// Apply an inbound frame to the mapping and the baseline.
     pub fn apply_inbound(&mut self, frame: &RangeFrame) -> Result<Applied, ApplyError> {
         if frame.file_id != self.file_id {
@@ -284,18 +412,12 @@ impl SharedFile {
         if frame.seq < self.last_applied {
             return Ok(Applied::DroppedStale);
         }
-        let len = self.scanner.len() as u64;
+        let len = self.map.len() as u64;
         let in_bounds = frame
             .offset
             .checked_add(frame.data.len() as u64)
             .is_some_and(|end| end <= len);
-        if !in_bounds
-            || !self.map.apply_inbound(frame.offset, &frame.data)
-            || self
-                .scanner
-                .apply_remote(frame.offset as usize, &frame.data)
-                .is_err()
-        {
+        if !in_bounds || !self.apply_bytes(frame.offset as usize, &frame.data) {
             return Err(ApplyError::OutOfBounds);
         }
         self.last_applied = frame.seq;
@@ -525,5 +647,137 @@ mod tests {
         );
         assert!(s.view().iter().all(|b| *b == 0));
         assert!(s.commit().is_empty());
+    }
+
+    fn armed(size: usize, pool_pages: usize) -> (tempfile::TempDir, SharedFile) {
+        let (d, mut s) = shared(size);
+        // SAFETY: the tests write only through `write_range` / `as_mut_ptr` on test threads.
+        unsafe { s.arm_trap(pool_pages) }.unwrap();
+        (d, s)
+    }
+
+    fn page() -> usize {
+        page_size::get()
+    }
+
+    #[test]
+    fn trapped_write_commits_exact_frame_then_nothing() {
+        let (_d, mut s) = armed(3 * page() + 100, 64);
+        s.set_seq(9);
+        s.write_range(10, &[1, 2, 3]).unwrap();
+        assert_eq!(s.commit(), vec![frame(5, 9, 10, &[1, 2, 3])]);
+        assert!(s.commit().is_empty(), "baseline must advance");
+    }
+
+    #[test]
+    fn in_place_write_through_the_pointer_is_found() {
+        let (_d, mut s) = armed(2 * page(), 64);
+        let p = s.as_mut_ptr().unwrap();
+        // SAFETY: inside the mapping; the fault handler unprotects the page and the write resumes.
+        unsafe { p.add(page() + 7).write(0xEE) };
+        let m = s.commit_local();
+        assert_eq!(
+            m,
+            vec![vec![ByteRange {
+                offset: page() as u64 + 7,
+                len: 1
+            }]]
+        );
+    }
+
+    #[test]
+    fn partial_last_page_and_untracked_pages_are_still_scanned() {
+        // pool of 2 pages tracks one page; page 1 and the 100-byte tail stay on the scan.
+        let (_d, mut s) = armed(2 * page() + 100, 2);
+        let tail = 2 * page() as u64 + 50;
+        s.write_range(3, &[1]).unwrap();
+        s.write_range(page() as u64 + 3, &[2]).unwrap();
+        s.write_range(tail, &[3]).unwrap();
+        let m = s.commit_local();
+        assert_eq!(
+            m,
+            vec![vec![
+                ByteRange { offset: 3, len: 1 },
+                ByteRange {
+                    offset: page() as u64 + 3,
+                    len: 1
+                },
+                ByteRange {
+                    offset: tail,
+                    len: 1
+                },
+            ]]
+        );
+    }
+
+    #[test]
+    fn inbound_frames_never_echo_in_trapped_scanned_and_boundary_spans() {
+        let (_d, mut s) = armed(2 * page() + 100, 64);
+        let edge = 2 * page() - 2; // spans the last trapped page into the partial tail page
+        s.apply_inbound(&frame(5, 1, 5, &[7; 3])).unwrap();
+        s.apply_inbound(&frame(5, 2, edge as u64, &[8; 4])).unwrap();
+        assert_eq!(&s.view()[edge..edge + 4], &[8; 4]);
+        assert!(s.commit().is_empty(), "inbound bytes must not echo back");
+    }
+
+    #[test]
+    fn local_write_beside_an_inbound_one_is_still_reported_when_trapped() {
+        let (_d, mut s) = armed(2 * page(), 64);
+        s.write_range(0, &[1]).unwrap();
+        s.apply_inbound(&frame(5, 1, 100, &[2])).unwrap();
+        let f = s.commit();
+        assert_eq!(f.len(), 1);
+        assert_eq!((f[0].offset, f[0].data.as_slice()), (0, &[1u8][..]));
+    }
+
+    #[test]
+    fn switching_a_page_to_scanned_and_back_loses_nothing() {
+        let (_d, mut s) = armed(2 * page(), 64);
+        s.set_page_mode(0..page(), Mode::Scanned).unwrap();
+        s.write_range(1, &[1]).unwrap();
+        s.set_page_mode(0..page(), Mode::Trapped).unwrap();
+        s.write_range(page() as u64 + 1, &[2]).unwrap();
+        assert_eq!(s.commit_local()[0].len(), 2);
+    }
+
+    #[test]
+    fn arm_twice_unmapped_and_tiny_are_refused() {
+        let (_d, mut s) = armed(page(), 64);
+        // SAFETY: refused before anything is protected.
+        assert!(matches!(
+            unsafe { s.arm_trap(64) },
+            Err(TrapError::AlreadyArmed)
+        ));
+        let mut h = SharedFile::from_snapshot(vec![0; page()], 5, 0);
+        assert!(matches!(
+            unsafe { h.arm_trap(64) },
+            Err(TrapError::NotLocal)
+        ));
+        assert!(h.as_mut_ptr().is_none());
+        assert!(matches!(
+            h.set_page_mode(0..page(), Mode::Scanned),
+            Err(TrapError::NotArmed)
+        ));
+        let (_d2, mut tiny) = shared(100);
+        assert!(matches!(
+            unsafe { tiny.arm_trap(64) },
+            Err(TrapError::TooSmall)
+        ));
+    }
+
+    #[test]
+    fn dropping_an_armed_file_unprotects_the_pages() {
+        let (d, s) = armed(page(), 64);
+        drop(s);
+        // Reopen the same file read-write: a still-protected mapping would be a different process view,
+        // so check the process-wide effect instead: arming again must succeed (slot released).
+        let n = d.path().join("n");
+        let f = d.path().join("svc.bin");
+        let crate::local_map::LocalMapOutcome::Local(m) = LocalMap::open(&f, &n) else {
+            panic!("local");
+        };
+        let mut again = SharedFile::new(*m, 5);
+        // SAFETY: as in `armed`.
+        unsafe { again.arm_trap(64) }.unwrap();
     }
 }
