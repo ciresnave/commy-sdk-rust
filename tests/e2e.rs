@@ -4,10 +4,12 @@
 //! ciresnave/commy). The server runs in a temporary directory, on a free loopback port, with
 //! development authentication on (the only way to authenticate today).
 
-use commy_sdk_rust::client::SharedEvent;
+use commy_sdk_rust::client::{RotationOutcome, SharedEvent};
 use commy_sdk_rust::{auth, Client};
+use commy_wire::RotateReason;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 struct Server {
@@ -135,4 +137,104 @@ async fn remote_mode_two_clients_exchange_ranges() {
             .unwrap(),
         SharedEvent::None
     ));
+}
+
+/// Poll until the drain barrier opens for this client.
+async fn next_pending(c: &Client) -> commy_wire::RotationPending {
+    for _ in 0..20 {
+        if let SharedEvent::RotationPending(p) = c.poll_shared_events(WAIT).await.unwrap() {
+            return p;
+        }
+    }
+    panic!("no RotationPending arrived");
+}
+
+/// Two remote clients on one service holding `b"old layout"` at offset 10.
+async fn rotation_rig(s: &Server, tenant: &str) -> (Arc<Client>, Arc<Client>, String) {
+    let a = Arc::new(s.session(tenant).await);
+    let b = Arc::new(s.session(tenant).await);
+    let svc = a.create_service(tenant, "svc", 8192).await.unwrap();
+    a.open_remote(&svc).await.unwrap();
+    b.open_remote(&svc).await.unwrap();
+    a.shared_write(&svc, 10, b"old layout").await.unwrap();
+    a.flush_shared(&svc).await.unwrap();
+    assert!(b.poll_shared_updates(WAIT).await.unwrap());
+    (a, b, svc)
+}
+
+#[tokio::test]
+async fn resize_rotation_requester_fills_the_new_file_and_everyone_switches() {
+    let s = Server::start().await;
+    let (a, b, svc) = rotation_rig(&s, "t_resize").await;
+    a.request_rotation(&svc, RotateReason::Resize, Some(16384), None)
+        .await
+        .unwrap();
+
+    let requester = async {
+        let p = next_pending(&a).await;
+        let RotationOutcome::Prepared(r) = a.drain_for_rotation(&p).await.unwrap() else {
+            panic!("the requester must be asked to fill");
+        };
+        let mut fill = a.begin_fill(&p, &r).unwrap();
+        assert_eq!(fill.size(), 16384);
+        // The service migrates its own layout: old offset 10 moves to 4096.
+        let old = a.shared_read(&svc, 10, 10).await.unwrap();
+        fill.write(4096, &old).unwrap();
+        a.finish_fill(fill).await.unwrap()
+    };
+    let member = async {
+        let p = next_pending(&b).await;
+        b.drain_for_rotation(&p).await.unwrap()
+    };
+    let (ra, rb) = tokio::join!(requester, member);
+    let (RotationOutcome::Committed(ca), RotationOutcome::Committed(cb)) = (ra, rb) else {
+        panic!("both must commit");
+    };
+    assert_eq!((ca.generation, ca.size), (1, 16384));
+    assert_eq!(ca.new_file_id, cb.new_file_id);
+    assert_ne!(ca.new_file_id, ca.old_file_id);
+    for c in [&a, &b] {
+        assert_eq!(c.shared_read(&svc, 4096, 10).await.unwrap(), b"old layout");
+        assert!(c.shared_read(&svc, 16380, 4).await.is_ok(), "new size");
+        assert!(c.shared_read(&svc, 16384, 1).await.is_err());
+        // Old-offset bytes are not replayed into the new layout.
+        assert_eq!(c.shared_read(&svc, 10, 10).await.unwrap(), vec![0u8; 10]);
+    }
+    // Writers resume on the new file.
+    b.shared_write(&svc, 12000, b"after").await.unwrap();
+    b.flush_shared(&svc).await.unwrap();
+    assert!(a.poll_shared_updates(WAIT).await.unwrap());
+    assert_eq!(a.shared_read(&svc, 12000, 5).await.unwrap(), b"after");
+}
+
+#[tokio::test]
+async fn resize_rotation_abort_keeps_the_old_file_and_writers_resume() {
+    let s = Server::start().await;
+    let (a, b, svc) = rotation_rig(&s, "t_abort").await;
+    a.request_rotation(&svc, RotateReason::Resize, Some(16384), None)
+        .await
+        .unwrap();
+
+    let requester = async {
+        let p = next_pending(&a).await;
+        let RotationOutcome::Prepared(r) = a.drain_for_rotation(&p).await.unwrap() else {
+            panic!("the requester must be asked to fill");
+        };
+        let fill = a.begin_fill(&p, &r).unwrap();
+        a.abort_fill(fill).await.unwrap()
+    };
+    let member = async {
+        let p = next_pending(&b).await;
+        b.drain_for_rotation(&p).await.unwrap()
+    };
+    let (ra, rb) = tokio::join!(requester, member);
+    assert!(matches!(ra, RotationOutcome::Aborted(_)));
+    assert!(matches!(rb, RotationOutcome::Aborted(_)));
+    // Still the old file, nothing lost, writes allowed again.
+    assert_eq!(a.shared_read(&svc, 10, 10).await.unwrap(), b"old layout");
+    assert!(b.shared_read(&svc, 8192, 1).await.is_err(), "old size");
+    b.shared_write(&svc, 100, b"resumed").await.unwrap();
+    b.flush_shared(&svc).await.unwrap();
+    assert!(a.poll_shared_updates(WAIT).await.unwrap());
+    assert_eq!(a.shared_read(&svc, 100, 7).await.unwrap(), b"resumed");
 }
