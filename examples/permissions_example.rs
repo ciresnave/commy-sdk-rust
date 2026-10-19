@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Creating service... ");
     io::stdout().flush()?;
 
-    match admin.create_service("my_tenant", "app_state").await {
+    match admin.create_service("my_tenant", "app_state", 65536).await {
         Ok(id) => println!("✅ (ID: {})", id),
         Err(CommyError::AlreadyExists(_)) => println!("ℹ️  (already exists)"),
         Err(e) => println!("⚠️  ({})", e),
@@ -136,7 +136,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Attempting to create service... ");
     io::stdout().flush()?;
 
-    match reader.create_service("my_tenant", "new_service").await {
+    match reader
+        .create_service("my_tenant", "new_service", 65536)
+        .await
+    {
         Ok(_) => println!("❌ Unexpectedly succeeded!"),
         Err(CommyError::Unauthorized(_)) => println!("✅ Permission denied"),
         Err(CommyError::PermissionDenied(_)) => println!("✅ Permission denied"),
@@ -189,7 +192,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Creating service... ");
     io::stdout().flush()?;
 
-    match creator.create_service("my_tenant", "user_cache").await {
+    match creator
+        .create_service("my_tenant", "user_cache", 65536)
+        .await
+    {
         Ok(id) => println!("✅ (ID: {})", id),
         Err(CommyError::AlreadyExists(_)) => println!("ℹ️  (already exists)"),
         Err(e) => println!("⚠️  ({})", e),

@@ -27,6 +27,8 @@ pub enum ClientMessage {
     CreateService {
         tenant_id: String,
         service_name: String,
+        /// File size in bytes (the server rounds up to whole pages and caps it).
+        size: u64,
     },
 
     /// Get existing service (errors if not found)

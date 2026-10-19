@@ -105,6 +105,7 @@ fn test_create_service_request_structure() {
     let request = ClientMessage::CreateService {
         tenant_id: "my_tenant".to_string(),
         service_name: "my_service".to_string(),
+        size: 65536,
     };
 
     let json = serde_json::to_string(&request).expect("Should serialize");

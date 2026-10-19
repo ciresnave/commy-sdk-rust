@@ -48,7 +48,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
-      - run: cargo test --all-features --no-fail-fast
+      # Every feature except `e2e`, which needs a server binary and has its own job.
+      - run: cargo test --features logging --no-fail-fast
+
+  e2e:
+    name: e2e (real commy server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ciresnave/commy
+          ref: 8d67286c8a5f2f8816d1ef9b24dcaed89c134956 # commy 0.7.1
+          path: commy
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      # commy pins nightly in its own rust-toolchain.toml; rustup picks the toolchain from the working
+      # directory, not from --manifest-path, so build from inside its checkout.
+      - run: rustup toolchain install nightly --profile minimal
+      # `--features libc`: commy 0.7.1 uses libc on unix without enabling the optional dependency (reported).
+      - run: cargo build --bin commy --features libc
+        working-directory: commy
+      - run: cargo test --features e2e --test e2e -- --test-threads=1
+        env:
+          COMMY_BIN: ${{ github.workspace }}/commy/target/debug/commy
 
   doc:
     name: doc

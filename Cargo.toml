@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.6.2"
+version = "0.7.0"
 authors = ["Commy Contributors"]
 build = false
 autolib = false
@@ -28,6 +28,8 @@ repository = "https://github.com/ciresnave/commy-sdk-rust"
 
 [features]
 default = []
+# Builds the end-to-end tests (`tests/e2e.rs`), which need a Commy server binary in `COMMY_BIN`.
+e2e = []
 logging = ["tracing-subscriber"]
 
 [lib]
@@ -117,6 +119,9 @@ version = "2"
 version = "1"
 features = ["full"]
 
+[dependencies.rustls]
+version = "0.23"
+
 [dependencies.tokio-tungstenite]
 version = "0.30"
 features = ["rustls-tls-native-roots"]
@@ -142,5 +147,16 @@ features = [
     "v4",
 ]
 
+[dev-dependencies.rcgen]
+version = "0.14"
+
+[dev-dependencies.tokio-rustls]
+version = "0.26"
+
 [dev-dependencies.tokio-test]
 version = "0.4"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+required-features = ["e2e"]

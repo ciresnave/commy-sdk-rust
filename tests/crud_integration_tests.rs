@@ -60,6 +60,7 @@ async fn test_create_service_message_format() {
     let msg = ClientMessage::CreateService {
         tenant_id: "org_a".to_string(),
         service_name: "config".to_string(),
+        size: 65536,
     };
 
     println!("CreateService message format:");
@@ -73,6 +74,10 @@ async fn test_create_service_message_format() {
     assert!(json.contains("CreateService"));
     assert!(json.contains("org_a"));
     assert!(json.contains("config"));
+    assert!(
+        json.contains("\"size\":65536"),
+        "the server requires a size: {json}"
+    );
 }
 
 #[tokio::test]
@@ -209,7 +214,7 @@ async fn test_create_service_idempotency_handling() {
     println!("1. First call: Returns ServiceId (created)");
     println!("2. Second call: Returns AlreadyExists error");
     println!("\nClient handling pattern:");
-    println!("match client.create_service(tenant, service).await {{");
+    println!("match client.create_service(tenant, service, 65536).await {{");
     println!("    Ok(id) => println!(\"Created: {{}}\", id),");
     println!("    Err(CommyError::AlreadyExists(_)) => {{");
     println!("        println!(\"Service exists, getting it...\");");
@@ -368,6 +373,7 @@ fn test_message_serialization_round_trip() {
     let original = ClientMessage::CreateService {
         tenant_id: "org_a".to_string(),
         service_name: "config".to_string(),
+        size: 65536,
     };
 
     // Serialize to JSON
@@ -381,6 +387,7 @@ fn test_message_serialization_round_trip() {
         ClientMessage::CreateService {
             tenant_id,
             service_name,
+            ..
         } => {
             assert_eq!(tenant_id, "org_a");
             assert_eq!(service_name, "config");

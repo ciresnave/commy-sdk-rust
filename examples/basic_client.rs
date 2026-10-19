@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Creating service... ");
     io::stdout().flush()?;
 
-    match client.create_service("my_tenant", "config").await {
+    match client.create_service("my_tenant", "config", 65536).await {
         Ok(id) => {
             println!("✅");
             println!("  │  └─ ID: {}", id);

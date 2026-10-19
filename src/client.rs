@@ -60,6 +60,9 @@ pub struct Client {
     /// Maximum reconnection attempts
     max_reconnect_attempts: u32,
 
+    /// PEM certificates to trust instead of the system roots (self-signed development servers)
+    tls_root_pem: Option<Vec<u8>>,
+
     /// Current reconnection attempt
     reconnect_attempts: Arc<AtomicU64>,
 
@@ -115,12 +118,20 @@ impl Client {
             state: create_shared_state(client_id),
             heartbeat_interval: Duration::from_secs(30),
             max_reconnect_attempts: 5,
+            tls_root_pem: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
             heartbeat_task: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Trust exactly the PEM certificate(s) in `pem` instead of the system roots when connecting
+    /// (a server with a self-signed certificate). Use it only for servers you control.
+    pub fn with_tls_root_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
+        self.tls_root_pem = Some(pem.into());
+        self
     }
 
     /// Create a new client (public - for testing/special cases)
@@ -139,6 +150,7 @@ impl Client {
             state: create_shared_state(client_id),
             heartbeat_interval: Duration::from_secs(30),
             max_reconnect_attempts: 5,
+            tls_root_pem: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
@@ -164,7 +176,7 @@ impl Client {
         state.connection_state = ConnectionState::Connecting;
         drop(state);
 
-        match Connection::new(&self.server_url).await {
+        match Connection::new_with_roots(&self.server_url, self.tls_root_pem.as_deref()).await {
             Ok(conn) => {
                 let mut state = self.state.write().await;
                 state.connection_state = ConnectionState::Connected;
@@ -262,7 +274,12 @@ impl Client {
     /// - Not authenticated to the tenant
     /// - Service already exists
     /// - Insufficient permissions (need create_service permission)
-    pub async fn create_service(&self, tenant_id: &str, service_name: &str) -> Result<String> {
+    pub async fn create_service(
+        &self,
+        tenant_id: &str,
+        service_name: &str,
+        size: u64,
+    ) -> Result<String> {
         // Check if authenticated to this tenant
         let state = self.state.read().await;
         if !state.is_authenticated_to(tenant_id) {
@@ -277,6 +294,7 @@ impl Client {
         self.send_message(ClientMessage::CreateService {
             tenant_id: tenant_id.to_string(),
             service_name: service_name.to_string(),
+            size,
         })
         .await?;
 
@@ -783,6 +801,21 @@ impl Client {
                 CommyError::InvalidOffset(format!("write at {offset} is outside the file"))
             }
         })
+    }
+
+    /// Copy `len` bytes at `offset` out of a mapped or remote-mirrored service.
+    pub async fn shared_read(&self, service_id: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
+        let shared = self.shared.read().await;
+        let file = shared
+            .get(service_id)
+            .ok_or_else(|| CommyError::NotFound(format!("service {service_id} is not open")))?;
+        let out_of_bounds =
+            || CommyError::InvalidOffset(format!("read at {offset}+{len} is outside the file"));
+        let end = offset.checked_add(len).ok_or_else(out_of_bounds)?;
+        file.view()
+            .get(offset as usize..end as usize)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(out_of_bounds)
     }
 
     /// Report what changed in a locally mapped service to the server, one `RangesChanged` per
@@ -1603,7 +1636,7 @@ mod tests {
     async fn test_create_service_not_authenticated_returns_permission_denied() {
         let client = Client::new("wss://localhost:9999");
         // No authentication → must fail immediately with PermissionDenied
-        let result = client.create_service("tenant_a", "my_service").await;
+        let result = client.create_service("tenant_a", "my_service", 65536).await;
         assert!(
             result.is_err(),
             "create_service must fail when not authenticated"
@@ -1677,7 +1710,9 @@ mod tests {
             message: "service creation failed: not found".to_string(),
         };
         let (client, _client_rx) = setup_client_with_mock_response("tenant_a", err_response).await;
-        let result = client.create_service("tenant_a", "missing_svc").await;
+        let result = client
+            .create_service("tenant_a", "missing_svc", 65536)
+            .await;
         assert!(
             result.is_err(),
             "create_service must fail on Error response"
@@ -1877,8 +1912,8 @@ mod tests {
 
         // Spawn both concurrently — only one can win the recv()
         let (r1, r2) = tokio::join!(
-            tokio::spawn(async move { c1.create_service("t1", "svc_a").await }),
-            tokio::spawn(async move { c2.create_service("t1", "svc_b").await }),
+            tokio::spawn(async move { c1.create_service("t1", "svc_a", 65536).await }),
+            tokio::spawn(async move { c2.create_service("t1", "svc_b", 65536).await }),
         );
 
         let r1 = r1.expect("task 1 panicked");
@@ -2218,7 +2253,7 @@ mod tests {
             },
         )
         .await;
-        let result = client.create_service("tenant_x", "my_service").await;
+        let result = client.create_service("tenant_x", "my_service", 65536).await;
         assert!(result.is_ok(), "create_service must succeed: {:?}", result);
         assert_eq!(result.unwrap(), "svc-abc-123");
     }
@@ -2617,6 +2652,44 @@ mod shared_tests {
             file_id: 5,
             seq,
         })
+    }
+
+    #[tokio::test]
+    async fn shared_read_returns_what_was_written_and_refuses_outside_the_file() {
+        let (client, _to, _from, _d) = rig().await;
+        client.shared_write("svc", 10, b"abc").await.unwrap();
+        assert_eq!(
+            client.shared_read("svc", 9, 5).await.unwrap(),
+            [0, b'a', b'b', b'c', 0]
+        );
+        assert!(matches!(
+            client.shared_read("svc", 8190, 4).await,
+            Err(CommyError::InvalidOffset(_))
+        ));
+        assert!(matches!(
+            client.shared_read("svc", u64::MAX, 2).await,
+            Err(CommyError::InvalidOffset(_))
+        ));
+        assert!(matches!(
+            client.shared_read("nope", 0, 1).await,
+            Err(CommyError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn create_service_sends_the_requested_size() {
+        let (client, _to, mut from, _d) = rig().await;
+        client.inject_auth_for_test("t").await;
+        // No reply is queued, so the call times out; the request is what matters.
+        let _ = tokio::time::timeout(
+            Duration::from_millis(200),
+            client.create_service("t", "svc2", 12345),
+        )
+        .await;
+        match from.recv().await {
+            Some(ClientMessage::CreateService { size, .. }) => assert_eq!(size, 12345),
+            other => panic!("expected CreateService, got {other:?}"),
+        }
     }
 
     #[tokio::test]
