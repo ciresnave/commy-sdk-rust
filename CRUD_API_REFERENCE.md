@@ -56,7 +56,7 @@ Create a new service explicitly.
 
 ```rust
 // Create a new service
-let service_id = client.create_service("my_tenant", "app_config").await?;
+let service_id = client.create_service("my_tenant", "app_config", 65536).await?;
 println!("Created service: {}", service_id);
 ```
 
@@ -77,7 +77,7 @@ println!("Created service: {}", service_id);
 **Example with error handling:**
 
 ```rust
-match client.create_service("org_a", "config").await {
+match client.create_service("org_a", "config", 65536).await {
     Ok(id) => println!("Created: {}", id),
     Err(CommyError::AlreadyExists(_)) => {
         println!("Service exists, getting it...");
@@ -201,7 +201,7 @@ client.authenticate("org_a", api_key("read_only_key")).await?;
 let service = client.get_service("org_a", "config").await?;
 
 // ❌ This fails with PermissionDenied (no ServiceCreate)
-client.create_service("org_a", "new_svc").await?;  // Error!
+client.create_service("org_a", "new_svc", 65536).await?;  // Error!
 
 // ❌ This fails with PermissionDenied (no ServiceDelete)
 client.delete_service("org_a", "config").await?;  // Error!
@@ -216,7 +216,7 @@ client.connect().await?;
 client.authenticate("org_a", api_key("creator_key")).await?;
 
 // ✅ This works (has ServiceCreate)
-let id = client.create_service("org_a", "new_svc").await?;
+let id = client.create_service("org_a", "new_svc", 65536).await?;
 
 // ✅ This works (has ServiceRead)
 let service = client.get_service("org_a", "new_svc").await?;
@@ -304,7 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Authenticated! Permissions: {:?}", auth_ctx.permissions);
 
     // 3. CREATE: Create a new service
-    match client.create_service("my_tenant", "app_config").await {
+    match client.create_service("my_tenant", "app_config", 65536).await {
         Ok(id) => println!("✓ Created service: {}", id),
         Err(e) => println!("✗ Failed to create: {}", e),
     }
@@ -338,7 +338,7 @@ async fn ensure_service_exists(
     tenant: &str,
     service: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match client.create_service(tenant, service).await {
+    match client.create_service(tenant, service, 65536).await {
         Ok(id) => {
             println!("Created new service: {}", id);
             Ok(id)
@@ -370,7 +370,7 @@ async fn read_service_safe(
             }
             Err(CommyError::NotFound(_)) => {
                 println!("Service not found, creating it...");
-                client.create_service(tenant, service).await?;
+                client.create_service(tenant, service, 65536).await?;
                 // Retry read
                 continue;
             }
@@ -409,7 +409,7 @@ let svc = client.get_service("tenant", "service").await?;  // Fails with Unautho
 
 ```rust
 // ✅ Correct: Explicit creation with AlreadyExists handling
-match client.create_service(tenant, service).await {
+match client.create_service(tenant, service, 65536).await {
     Ok(id) => println!("Created: {}", id),
     Err(CommyError::AlreadyExists(_)) => {
         let svc = client.get_service(tenant, service).await?;
@@ -425,7 +425,7 @@ match client.create_service(tenant, service).await {
 
 ```rust
 // ✅ Correct: Distinguish between PermissionDenied and NotFound
-match client.create_service(tenant, service).await {
+match client.create_service(tenant, service, 65536).await {
     Err(CommyError::PermissionDenied(_)) => {
         // Different handling than NotFound
         eprintln!("Request admin to grant permission");
@@ -449,7 +449,7 @@ async fn create_with_retry(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut retries = 0;
     loop {
-        match client.create_service(tenant, service).await {
+        match client.create_service(tenant, service, 65536).await {
             Ok(id) => return Ok(id),
             Err(CommyError::ConnectionLost(_)) | Err(CommyError::Timeout) => {
                 retries += 1;
@@ -511,7 +511,7 @@ let service = client.get_service("tenant", "svc").await?;
 **New Code (Explicit):**
 ```rust
 // New: explicit creation + safe reading
-let id = client.create_service("tenant", "svc").await
+let id = client.create_service("tenant", "svc", 65536).await
     .or_else(|e| match e {
         CommyError::AlreadyExists(_) => {
             client.get_service("tenant", "svc").await.map(|s| s.id)

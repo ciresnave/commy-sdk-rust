@@ -44,7 +44,7 @@ The SDK provides explicit CRUD methods with clear semantics:
 
 ```rust
 // CREATE: Explicitly create a service
-let service_id = client.create_service("my_tenant", "app_config").await?;
+let service_id = client.create_service("my_tenant", "app_config", 65536).await?;
 println!("✓ Created service: {}", service_id);
 
 // READ: Safe read (no side effects, won't create)
@@ -63,7 +63,7 @@ Each operation returns specific errors:
 ```rust
 use commy_client::CommyError;
 
-match client.create_service("my_tenant", "config").await {
+match client.create_service("my_tenant", "config", 65536).await {
     Ok(id) => println!("✓ Created: {}", id),
     Err(CommyError::AlreadyExists(_)) => {
         // Service already exists, get it instead
@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Connected and authenticated!");
     
     // 2. CREATE: Create a new service
-    let service_id = match client.create_service("my_org", "user_config").await {
+    let service_id = match client.create_service("my_org", "user_config", 65536).await {
         Ok(id) => {
             println!("✓ Created service: {}", id);
             id
@@ -180,7 +180,7 @@ async fn ensure_service_exists(
     tenant: &str,
     service: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match client.create_service(tenant, service).await {
+    match client.create_service(tenant, service, 65536).await {
         Ok(id) => Ok(id),
         Err(CommyError::AlreadyExists(_)) => {
             let svc = client.get_service(tenant, service).await?;
@@ -202,7 +202,7 @@ async fn get_or_create(
     match client.get_service(tenant, service).await {
         Ok(svc) => Ok(svc.id),
         Err(CommyError::NotFound(_)) => {
-            match client.create_service(tenant, service).await {
+            match client.create_service(tenant, service, 65536).await {
                 Ok(id) => Ok(id),
                 Err(CommyError::AlreadyExists(_)) => {
                     // Another client created it, retry read
@@ -254,7 +254,7 @@ let result = client.authenticate("tenant", auth::api_key("correct_key")).await?;
 ```rust
 let mut retries = 0;
 loop {
-    match client.create_service(tenant, svc).await {
+    match client.create_service(tenant, svc, 65536).await {
         Ok(id) => return Ok(id),
         Err(CommyError::Timeout) if retries < 3 => {
             retries += 1;

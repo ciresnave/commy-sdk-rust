@@ -5,7 +5,7 @@ use crate::message::{ClientMessage, ServerMessage};
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message, Connector};
 
 /// Connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,26 @@ fn decode_inbound(msg: Message) -> Option<ServerMessage> {
     }
 }
 
+/// A TLS client config that trusts only the certificates in `pem`.
+fn client_config(pem: &[u8]) -> Result<rustls::ClientConfig> {
+    use rustls::pki_types::{pem::PemObject, CertificateDer};
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in CertificateDer::pem_slice_iter(pem) {
+        let cert = cert.map_err(|e| CommyError::WebSocketError(format!("bad root PEM: {e}")))?;
+        roots
+            .add(cert)
+            .map_err(|e| CommyError::WebSocketError(format!("bad root certificate: {e}")))?;
+    }
+    if roots.is_empty() {
+        return Err(CommyError::WebSocketError(
+            "no certificate in the root PEM".to_string(),
+        ));
+    }
+    Ok(rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth())
+}
+
 /// Manages WebSocket connection
 pub struct Connection {
     state: Arc<RwLock<ConnectionState>>,
@@ -61,7 +81,17 @@ pub struct Connection {
 impl Connection {
     /// Create a new connection
     pub async fn new(url: &str) -> Result<Self> {
-        let (ws_stream, _) = connect_async(url)
+        Self::new_with_roots(url, None).await
+    }
+
+    /// Create a new connection. With `root_pem`, trust exactly those certificates instead of the
+    /// system roots (a self-signed development server).
+    pub async fn new_with_roots(url: &str, root_pem: Option<&[u8]>) -> Result<Self> {
+        let connector = match root_pem {
+            Some(pem) => Some(Connector::Rustls(Arc::new(client_config(pem)?))),
+            None => None,
+        };
+        let (ws_stream, _) = connect_async_tls_with_config(url, None, false, connector)
             .await
             .map_err(|e| CommyError::WebSocketError(e.to_string()))?;
 
@@ -153,6 +183,69 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A loopback WSS server with a fresh self-signed certificate for 127.0.0.1; returns its URL
+    /// and the certificate PEM.
+    async fn tls_server() -> (String, String) {
+        use rustls::pki_types::{pem::PemObject, PrivateKeyDer};
+        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+        let pem = cert.cert.pem();
+        let certs = vec![cert.cert.der().clone()];
+        let key =
+            PrivateKeyDer::from_pem_slice(cert.signing_key.serialize_pem().as_bytes()).unwrap();
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    if let Ok(tls) = acceptor.accept(tcp).await {
+                        if let Ok(mut ws) = tokio_tungstenite::accept_async(tls).await {
+                            let _ = ws.send(Message::Text("{\"type\":\"Pong\"}".into())).await;
+                            let _ = ws.next().await;
+                        }
+                    }
+                });
+            }
+        });
+        (format!("wss://127.0.0.1:{port}"), pem)
+    }
+
+    #[tokio::test]
+    async fn self_signed_server_is_trusted_only_with_its_root() {
+        let (url, pem) = tls_server().await;
+        assert!(
+            Connection::new_with_roots(&url, Some(pem.as_bytes()))
+                .await
+                .is_ok(),
+            "the pinned root must be accepted"
+        );
+        assert!(
+            Connection::new(&url).await.is_err(),
+            "without the root a self-signed certificate must be refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn another_servers_root_is_not_trusted() {
+        let (url, _) = tls_server().await;
+        let (_, other_pem) = tls_server().await;
+        assert!(Connection::new_with_roots(&url, Some(other_pem.as_bytes()))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_root_pem_with_no_certificate_is_an_error() {
+        let (url, _) = tls_server().await;
+        let e = Connection::new_with_roots(&url, Some(b"not a pem")).await;
+        assert!(matches!(e, Err(CommyError::WebSocketError(m)) if m.contains("no certificate")));
+    }
 
     #[test]
     fn test_connection_state() {
