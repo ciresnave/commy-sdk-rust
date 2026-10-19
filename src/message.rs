@@ -100,6 +100,12 @@ pub enum ClientMessage {
     /// This client has flushed everything into the old file (resize drain barrier)
     RotationDrained(commy_wire::RotationDrained),
 
+    /// Requester: the prepared file is filled; commit the rotation
+    RotationFilled(commy_wire::RotationFilled),
+
+    /// Requester: give up the rotation; the old file stays live
+    RotationAbort(commy_wire::RotationAbort),
+
     /// Remote sender: the frames for one flush are complete
     FlushEnd(commy_wire::FlushEnd),
 
@@ -193,8 +199,14 @@ pub enum ServerMessage {
     /// Resize drain barrier is open: flush and answer `RotationDrained`
     RotationPending(commy_wire::RotationPending),
 
+    /// Requester only: the new file exists, zero filled and not live; fill it
+    RotationPrepared(commy_wire::RotationPrepared),
+
     /// The new file is live
     RotationCommit(commy_wire::RotationCommit),
+
+    /// The rotation was abandoned; the old file stays live
+    RotationAborted(commy_wire::RotationAborted),
 
     /// Writes of this client were lost
     Loss(commy_wire::Loss),
