@@ -44,6 +44,30 @@ pub enum FallbackReason {
     IncompleteOffer,
 }
 
+/// Map the prepared (not yet live) file of a resize for the requester to fill. Same rules as
+/// [`LocalMap::open`] (regular file, no symlink), no nonce: the handshake is redone after the commit.
+/// The file must be exactly `size` bytes.
+pub fn open_fill_target(path: &Path, size: u64) -> Result<MmapMut, FallbackReason> {
+    require_regular(path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| FallbackReason::OpenFailed(e.to_string()))?;
+    match file.metadata() {
+        Ok(m) if m.len() == size && size > 0 => {}
+        Ok(m) => {
+            return Err(FallbackReason::OpenFailed(format!(
+                "prepared file is {} bytes, expected {size}",
+                m.len()
+            )))
+        }
+        Err(e) => return Err(FallbackReason::OpenFailed(e.to_string())),
+    }
+    // SAFETY: as in `LocalMap::open`; the server created this file for us.
+    unsafe { MmapMut::map_mut(&file) }.map_err(|e| FallbackReason::MapFailed(e.to_string()))
+}
+
 /// A service file mapped read-write, with the nonce that proves the mapping is local.
 ///
 /// `view` is what callers see (and what the S3 write trap will protect). `alias` is a second

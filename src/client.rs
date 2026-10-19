@@ -25,11 +25,63 @@ pub enum SharedEvent {
     Updated,
     /// A resize drain barrier opened: call [`Client::drain_for_rotation`].
     RotationPending(commy_wire::RotationPending),
+    /// Requester only: the new file is ready to fill (seen outside [`Client::drain_for_rotation`]).
+    RotationPrepared(commy_wire::RotationPrepared),
     /// The new file is live: call [`Client::complete_rotation`].
     RotationCommit(commy_wire::RotationCommit),
+    /// The rotation was abandoned: the old file stays live and writers may resume on it.
+    RotationAborted(commy_wire::RotationAborted),
     /// Writes were lost. For `ROTATION_STRAGGLER`, `REVOKED` and unknown kinds the mapping has
     /// been dropped; `RESYNC_OVERWROTE` keeps it.
     Loss(commy_wire::Loss),
+}
+
+/// How a resize rotation ended for this client (or, for the requester, where it stands).
+#[derive(Debug)]
+pub enum RotationOutcome {
+    /// The new file is live and mapped.
+    Committed(commy_wire::RotationCommit),
+    /// The rotation was abandoned; the old file is still mapped and writable.
+    Aborted(commy_wire::RotationAborted),
+    /// Requester only: fill the new file ([`Client::begin_fill`]) and finish or abort.
+    Prepared(commy_wire::RotationPrepared),
+}
+
+/// The prepared file of a resize, being filled by the requester.
+pub struct RotationFill {
+    prepared: commy_wire::RotationPrepared,
+    fill_ms: u64,
+    target: FillTarget,
+}
+
+enum FillTarget {
+    /// The prepared file mapped on this machine.
+    Local(memmap2::MmapMut),
+    /// A private buffer sent as range frames at the end.
+    Remote(Vec<u8>),
+}
+
+impl RotationFill {
+    /// Size of the new file in bytes.
+    pub fn size(&self) -> u64 {
+        self.prepared.size
+    }
+
+    /// Write `bytes` at `offset` in the new file (zero filled until written).
+    pub fn write(&mut self, offset: u64, bytes: &[u8]) -> Result<()> {
+        let out_of_bounds =
+            || CommyError::InvalidOffset(format!("write at {offset} is outside the new file"));
+        let end = offset
+            .checked_add(bytes.len() as u64)
+            .filter(|e| *e <= self.prepared.size)
+            .ok_or_else(out_of_bounds)?;
+        let buf: &mut [u8] = match &mut self.target {
+            FillTarget::Local(m) => m,
+            FillTarget::Remote(v) => v,
+        };
+        buf[offset as usize..end as usize].copy_from_slice(bytes);
+        Ok(())
+    }
 }
 
 /// Extra time after `deadline_ms` before a missing `RotationCommit` counts as a failed rotation.
@@ -1044,7 +1096,9 @@ impl Client {
                 }
             }
             ServerMessage::RotationPending(p) => SharedEvent::RotationPending(p),
+            ServerMessage::RotationPrepared(p) => SharedEvent::RotationPrepared(p),
             ServerMessage::RotationCommit(c) => SharedEvent::RotationCommit(c),
+            ServerMessage::RotationAborted(a) => SharedEvent::RotationAborted(a),
             ServerMessage::Loss(l) => {
                 if l.kind != commy_wire::LossKind::ResyncOverwrote {
                     let mut shared = self.shared.write().await;
@@ -1106,14 +1160,21 @@ impl Client {
     }
 
     /// Answer a resize `RotationPending`: refuse new writes, flush into the old file, send
-    /// `RotationDrained`, wait for `RotationCommit` (at most `deadline_ms` plus a grace period) and
-    /// switch to the new file. Writers get an error until then; old-offset writes are never
-    /// replayed into the new layout.
+    /// `RotationDrained`, then wait for the end of the rotation (at most `deadline_ms + fill_ms`
+    /// plus a grace period). Returns `Committed` (switched to the new file), `Aborted` (writes
+    /// resume on the old file), or, for the requester only, `Prepared`: fill the new file with
+    /// [`Client::begin_fill`] and finish with [`Client::finish_fill`]. Writers get an error until the
+    /// end; old-offset writes are never replayed into the new layout.
     pub async fn drain_for_rotation(
         &self,
         p: &commy_wire::RotationPending,
-    ) -> Result<commy_wire::RotationCommit> {
-        let wait = Duration::from_millis(p.deadline_ms);
+    ) -> Result<RotationOutcome> {
+        let start = tokio::time::Instant::now();
+        let flush_wait = Duration::from_millis(p.deadline_ms);
+        let bound = start
+            + Duration::from_millis(p.deadline_ms)
+            + Duration::from_millis(p.fill_ms)
+            + ROTATION_COMMIT_GRACE;
         {
             let mut shared = self.shared.write().await;
             let file = shared.get_mut(&p.service_id).ok_or_else(|| {
@@ -1128,7 +1189,7 @@ impl Client {
             }
             file.set_draining(true);
         }
-        let result = self.drain_inner(p, wait).await;
+        let result = self.drain_inner(p, flush_wait, bound).await;
         if result.is_err() {
             if let Some(f) = self.shared.write().await.get_mut(&p.service_id) {
                 f.set_draining(false);
@@ -1140,9 +1201,11 @@ impl Client {
     async fn drain_inner(
         &self,
         p: &commy_wire::RotationPending,
-        wait: Duration,
-    ) -> Result<commy_wire::RotationCommit> {
-        self.flush_shared_with_timeout(&p.service_id, wait).await?;
+        flush_wait: Duration,
+        bound: tokio::time::Instant,
+    ) -> Result<RotationOutcome> {
+        self.flush_shared_with_timeout(&p.service_id, flush_wait)
+            .await?;
         let seq = self
             .shared
             .read()
@@ -1150,7 +1213,7 @@ impl Client {
             .get(&p.service_id)
             .map(SharedFile::last_seq)
             .unwrap_or(0);
-        let commit = {
+        {
             let guard = self.connection.read().await;
             let Some(conn) = guard.as_ref() else {
                 return Err(CommyError::ConnectionLost(
@@ -1166,16 +1229,53 @@ impl Client {
                 },
             ))
             .await?;
-            let deadline = tokio::time::Instant::now() + wait + ROTATION_COMMIT_GRACE;
+        }
+        self.await_rotation_end(&p.service_id, &p.rotation_id, bound, true)
+            .await
+    }
+
+    /// Wait for the first of `RotationCommit` / `RotationAborted` for `rotation_id` (and, when
+    /// `stop_on_prepared`, `RotationPrepared`). The first terminal message wins; later ones for the
+    /// same id are never read as this rotation's end. A commit switches the mapping; an abort
+    /// reopens writes on the old file.
+    async fn await_rotation_end(
+        &self,
+        service_id: &str,
+        rotation_id: &str,
+        bound: tokio::time::Instant,
+        stop_on_prepared: bool,
+    ) -> Result<RotationOutcome> {
+        enum End {
+            Commit(commy_wire::RotationCommit),
+            Aborted(commy_wire::RotationAborted),
+            Prepared(commy_wire::RotationPrepared),
+        }
+        let end = {
+            let guard = self.connection.read().await;
+            let Some(conn) = guard.as_ref() else {
+                return Err(CommyError::ConnectionLost(
+                    "Connection lost during rotation".to_string(),
+                ));
+            };
             loop {
-                match tokio::time::timeout_at(deadline, conn.recv()).await {
+                match tokio::time::timeout_at(bound, conn.recv()).await {
                     Ok(Ok(Some(ServerMessage::RotationCommit(c))))
-                        if c.rotation_id == p.rotation_id =>
+                        if c.rotation_id == rotation_id =>
                     {
-                        break c
+                        break End::Commit(c)
                     }
-                    Ok(Ok(Some(ServerMessage::Loss(l)))) if l.service_id == p.service_id => {
-                        self.shared.write().await.remove(&p.service_id);
+                    Ok(Ok(Some(ServerMessage::RotationAborted(a))))
+                        if a.rotation_id == rotation_id =>
+                    {
+                        break End::Aborted(a)
+                    }
+                    Ok(Ok(Some(ServerMessage::RotationPrepared(r))))
+                        if stop_on_prepared && r.rotation_id == rotation_id =>
+                    {
+                        break End::Prepared(r)
+                    }
+                    Ok(Ok(Some(ServerMessage::Loss(l)))) if l.service_id == service_id => {
+                        self.shared.write().await.remove(service_id);
                         return Err(CommyError::InvalidState(format!(
                             "dropped from the service: {:?}",
                             l.kind
@@ -1186,15 +1286,140 @@ impl Client {
                     }
                     Ok(Ok(None)) | Ok(Err(_)) => {
                         return Err(CommyError::ConnectionLost(
-                            "Connection closed during drain_for_rotation".to_string(),
+                            "Connection closed during rotation".to_string(),
                         ))
                     }
                     Err(_) => return Err(CommyError::Timeout),
                 }
             }
         };
-        self.complete_rotation(&commit).await?;
-        Ok(commit)
+        match end {
+            End::Commit(c) => {
+                self.complete_rotation(&c).await?;
+                Ok(RotationOutcome::Committed(c))
+            }
+            End::Aborted(a) => {
+                if let Some(f) = self.shared.write().await.get_mut(service_id) {
+                    f.set_draining(false);
+                }
+                Ok(RotationOutcome::Aborted(a))
+            }
+            End::Prepared(r) => Ok(RotationOutcome::Prepared(r)),
+        }
+    }
+
+    /// Requester: get the prepared file ready to fill. With a `path` (same machine) the file is
+    /// mapped directly; without one the new bytes are buffered and sent as range frames by
+    /// [`Client::finish_fill`]. Read the old layout with [`Client::shared_read`].
+    pub fn begin_fill(
+        &self,
+        pending: &commy_wire::RotationPending,
+        prepared: &commy_wire::RotationPrepared,
+    ) -> Result<RotationFill> {
+        let target = match &prepared.path {
+            Some(path) => FillTarget::Local(
+                crate::local_map::open_fill_target(std::path::Path::new(path), prepared.size)
+                    .map_err(|r| CommyError::InvalidState(format!("cannot fill {path}: {r:?}")))?,
+            ),
+            None => {
+                let size = usize::try_from(prepared.size)
+                    .ok()
+                    .filter(|n| *n > 0 && *n <= MAX_REMOTE_FILE_BYTES)
+                    .ok_or_else(|| {
+                        CommyError::InvalidMessage(format!(
+                            "prepared size {} is not acceptable",
+                            prepared.size
+                        ))
+                    })?;
+                FillTarget::Remote(vec![0; size])
+            }
+        };
+        Ok(RotationFill {
+            prepared: prepared.clone(),
+            fill_ms: pending.fill_ms,
+            target,
+        })
+    }
+
+    /// Requester: the new file is filled. Send it (remote), say `RotationFilled`, and wait for the
+    /// end of the rotation: `Committed` (switched) or `Aborted` (the old file stays).
+    pub async fn finish_fill(&self, fill: RotationFill) -> Result<RotationOutcome> {
+        let fill_wait = Duration::from_millis(fill.fill_ms);
+        let bound = tokio::time::Instant::now() + fill_wait + ROTATION_COMMIT_GRACE;
+        let RotationFill {
+            prepared, target, ..
+        } = fill;
+        {
+            let guard = self.connection.read().await;
+            let Some(conn) = guard.as_ref() else {
+                return Err(CommyError::ConnectionLost(
+                    "Connection lost during finish_fill".to_string(),
+                ));
+            };
+            match target {
+                FillTarget::Local(map) => map
+                    .flush()
+                    .map_err(|e| CommyError::InvalidState(format!("flushing the new file: {e}")))?,
+                FillTarget::Remote(data) => {
+                    // The server's file is zero filled: only non-zero runs need to travel.
+                    let changed = dirty_ranges::Scanner::new(&vec![0u8; data.len()])
+                        .scan(&data)
+                        .expect("same length");
+                    for r in changed {
+                        for frame in commy_wire::RangeFrame::split(
+                            prepared.new_file_id,
+                            0,
+                            r.offset as u64,
+                            &data[r.offset..r.offset + r.len],
+                        ) {
+                            conn.send(ClientMessage::Range(frame)).await?;
+                        }
+                    }
+                    let request_id = Uuid::new_v4().to_string();
+                    conn.send(ClientMessage::FlushEnd(commy_wire::FlushEnd {
+                        request_id: request_id.clone(),
+                        file_id: prepared.new_file_id,
+                    }))
+                    .await?;
+                    self.await_flush_ack(conn, &prepared.service_id, &request_id, fill_wait)
+                        .await?;
+                }
+            }
+            conn.send(ClientMessage::RotationFilled(commy_wire::RotationFilled {
+                request_id: Uuid::new_v4().to_string(),
+                rotation_id: prepared.rotation_id.clone(),
+            }))
+            .await?;
+        }
+        self.await_rotation_end(&prepared.service_id, &prepared.rotation_id, bound, false)
+            .await
+    }
+
+    /// Requester: give up. The server keeps the old file and sends `RotationAborted` to everyone.
+    pub async fn abort_fill(&self, fill: RotationFill) -> Result<RotationOutcome> {
+        let bound = tokio::time::Instant::now()
+            + Duration::from_millis(fill.fill_ms)
+            + ROTATION_COMMIT_GRACE;
+        {
+            let guard = self.connection.read().await;
+            let Some(conn) = guard.as_ref() else {
+                return Err(CommyError::ConnectionLost(
+                    "Connection lost during abort_fill".to_string(),
+                ));
+            };
+            conn.send(ClientMessage::RotationAbort(commy_wire::RotationAbort {
+                request_id: Uuid::new_v4().to_string(),
+                rotation_id: fill.prepared.rotation_id.clone(),
+            }))
+            .await?;
+        }
+        self.await_rotation_end(
+            &fill.prepared.service_id,
+            &fill.prepared.rotation_id,
+            bound,
+            false,
+        )
+        .await
     }
 
     /// Switch a service to the file named by a `RotationCommit`: re-run the local handshake (or
@@ -3012,6 +3237,7 @@ mod rotation_tests {
             service_id: "svc".to_string(),
             file_id: 5,
             deadline_ms: 400,
+            fill_ms: 400,
         }
     }
 
@@ -3107,7 +3333,10 @@ mod rotation_tests {
             serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
         };
         let (res, ()) = tokio::join!(fut, drive);
-        assert_eq!(res.unwrap().new_file_id, 6);
+        let RotationOutcome::Committed(c) = res.unwrap() else {
+            panic!("expected Committed");
+        };
+        assert_eq!(c.new_file_id, 6);
         let shared = client.shared.read().await;
         let f = shared.get("svc").unwrap();
         assert_eq!((f.file_id(), f.generation()), (6, 1));
@@ -3117,6 +3346,264 @@ mod rotation_tests {
             "old-offset writes must not be replayed after a resize"
         );
         assert_eq!(f.view().len(), 16384);
+    }
+
+    async fn expect_drained(
+        to_client: &UnboundedSender<ServerMessage>,
+        from_client: &mut UnboundedReceiver<ClientMessage>,
+    ) {
+        // Nothing unflushed: straight to RotationDrained.
+        let ClientMessage::RotationDrained(d) = from_client.recv().await.unwrap() else {
+            panic!("expected RotationDrained");
+        };
+        assert_eq!(d.file_id, 5);
+        let _ = to_client;
+    }
+
+    fn aborted(rid: &str) -> commy_wire::RotationAborted {
+        commy_wire::RotationAborted {
+            rotation_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            file_id: 5,
+            reason: commy_wire::AbortReason::FillTimeout,
+        }
+    }
+
+    fn prepared(rid: &str, path: Option<String>, size: u64) -> commy_wire::RotationPrepared {
+        commy_wire::RotationPrepared {
+            rotation_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            old_file_id: 5,
+            new_file_id: 6,
+            size,
+            path,
+        }
+    }
+
+    #[tokio::test]
+    async fn abort_after_drain_reopens_writes_on_the_old_file_and_ignores_other_rotations() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            ..
+        } = rig().await;
+        let p = pending("rotA");
+        let fut = client.drain_for_rotation(&p);
+        let drive = async {
+            expect_drained(&to_client, &mut from_client).await;
+            // Another rotation's abort is not ours.
+            to_client
+                .send(ServerMessage::RotationAborted(aborted("other")))
+                .unwrap();
+            assert!(client.shared_write("svc", 0, &[1]).await.is_err());
+            to_client
+                .send(ServerMessage::RotationAborted(aborted("rotA")))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res.unwrap(), RotationOutcome::Aborted(a) if a.rotation_id == "rotA"));
+        let shared = client.shared.read().await;
+        let f = shared.get("svc").unwrap();
+        assert_eq!(f.file_id(), 5, "still on the old file");
+        assert!(!f.is_draining());
+        drop(shared);
+        client.shared_write("svc", 0, &[1]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn first_terminal_message_wins_a_later_commit_is_not_read() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            ..
+        } = rig().await;
+        let p = pending("rotB");
+        let fut = client.drain_for_rotation(&p);
+        let drive = async {
+            expect_drained(&to_client, &mut from_client).await;
+            to_client
+                .send(ServerMessage::RotationAborted(aborted("rotB")))
+                .unwrap();
+            to_client
+                .send(ServerMessage::RotationCommit(commit(
+                    "rotB",
+                    RotateReason::Resize,
+                    1,
+                )))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res.unwrap(), RotationOutcome::Aborted(_)));
+        assert_eq!(
+            client.shared.read().await.get("svc").unwrap().generation(),
+            0,
+            "the late commit must not switch the mapping"
+        );
+    }
+
+    #[tokio::test]
+    async fn requester_fills_a_local_prepared_file_then_commits() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            dir,
+        } = rig().await;
+        let prep_path = dir.path().join("prep.bin");
+        std::fs::write(&prep_path, vec![0u8; 16384]).unwrap();
+        let p = pending("rotC");
+        let fut = async {
+            let RotationOutcome::Prepared(r) = client.drain_for_rotation(&p).await.unwrap() else {
+                panic!("requester must get Prepared");
+            };
+            let mut fill = client.begin_fill(&p, &r).unwrap();
+            assert_eq!(fill.size(), 16384);
+            assert!(fill.write(16383, &[1, 2]).is_err(), "past the end");
+            fill.write(100, b"new shape").unwrap();
+            client.finish_fill(fill).await.unwrap()
+        };
+        let drive = async {
+            expect_drained(&to_client, &mut from_client).await;
+            to_client
+                .send(ServerMessage::RotationPrepared(prepared(
+                    "rotC",
+                    Some(prep_path.to_string_lossy().into_owned()),
+                    16384,
+                )))
+                .unwrap();
+            let ClientMessage::RotationFilled(f) = from_client.recv().await.unwrap() else {
+                panic!("expected RotationFilled");
+            };
+            assert_eq!(f.rotation_id, "rotC");
+            assert_eq!(&std::fs::read(&prep_path).unwrap()[100..109], b"new shape");
+            to_client
+                .send(ServerMessage::RotationCommit(commit(
+                    "rotC",
+                    RotateReason::Resize,
+                    1,
+                )))
+                .unwrap();
+            serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, RotationOutcome::Committed(_)));
+        assert_eq!(
+            client.shared.read().await.get("svc").unwrap().generation(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn requester_fills_a_remote_prepared_file_as_frames_then_sees_the_abort() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            ..
+        } = rig().await;
+        let p = pending("rotD");
+        let fut = async {
+            let RotationOutcome::Prepared(r) = client.drain_for_rotation(&p).await.unwrap() else {
+                panic!("requester must get Prepared");
+            };
+            let mut fill = client.begin_fill(&p, &r).unwrap();
+            fill.write(8, b"remote").unwrap();
+            client.finish_fill(fill).await.unwrap()
+        };
+        let drive = async {
+            expect_drained(&to_client, &mut from_client).await;
+            to_client
+                .send(ServerMessage::RotationPrepared(prepared(
+                    "rotD", None, 4096,
+                )))
+                .unwrap();
+            // Only the non-zero run travels, for the NEW file id, seq 0, absolute offsets.
+            let ClientMessage::Range(frame) = from_client.recv().await.unwrap() else {
+                panic!("expected a range frame");
+            };
+            assert_eq!(
+                (
+                    frame.file_id,
+                    frame.seq,
+                    frame.offset,
+                    frame.data.as_slice()
+                ),
+                (6, 0, 8, &b"remote"[..])
+            );
+            let ClientMessage::FlushEnd(e) = from_client.recv().await.unwrap() else {
+                panic!("expected FlushEnd");
+            };
+            assert_eq!(e.file_id, 6);
+            to_client
+                .send(ServerMessage::FlushAck(FlushAck {
+                    request_id: e.request_id,
+                    file_id: 6,
+                    seq: 0,
+                }))
+                .unwrap();
+            let ClientMessage::RotationFilled(_) = from_client.recv().await.unwrap() else {
+                panic!("expected RotationFilled");
+            };
+            to_client
+                .send(ServerMessage::RotationAborted(aborted("rotD")))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, RotationOutcome::Aborted(_)));
+        assert!(!client.shared.read().await.get("svc").unwrap().is_draining());
+    }
+
+    #[tokio::test]
+    async fn requester_can_abort_the_fill() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            ..
+        } = rig().await;
+        let p = pending("rotE");
+        let fut = async {
+            let RotationOutcome::Prepared(r) = client.drain_for_rotation(&p).await.unwrap() else {
+                panic!("requester must get Prepared");
+            };
+            let fill = client.begin_fill(&p, &r).unwrap();
+            client.abort_fill(fill).await.unwrap()
+        };
+        let drive = async {
+            expect_drained(&to_client, &mut from_client).await;
+            to_client
+                .send(ServerMessage::RotationPrepared(prepared(
+                    "rotE", None, 4096,
+                )))
+                .unwrap();
+            let ClientMessage::RotationAbort(a) = from_client.recv().await.unwrap() else {
+                panic!("expected RotationAbort");
+            };
+            assert_eq!(a.rotation_id, "rotE");
+            to_client
+                .send(ServerMessage::RotationAborted(
+                    commy_wire::RotationAborted {
+                        reason: commy_wire::AbortReason::RequesterAbort,
+                        ..aborted("rotE")
+                    },
+                ))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, RotationOutcome::Aborted(a)
+            if a.reason == commy_wire::AbortReason::RequesterAbort));
+    }
+
+    #[test]
+    fn begin_fill_refuses_a_bad_size_or_path() {
+        let c = Client::new("wss://localhost:9000");
+        let p = pending("x");
+        assert!(c.begin_fill(&p, &prepared("x", None, 0)).is_err());
+        assert!(c
+            .begin_fill(&p, &prepared("x", Some("/no/such/file".into()), 4096))
+            .is_err());
     }
 
     #[tokio::test]
