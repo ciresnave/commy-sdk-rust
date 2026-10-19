@@ -290,18 +290,16 @@ let config = ServerConfig {
 
 ## Integration Testing
 
-Run integration tests that use the server infrastructure:
+The end-to-end tests start a real Commy server (a built `commy` binary named by `COMMY_BIN`, with a
+generated self-signed certificate and in-memory authentication) and drive the SDK against it:
 
 ```bash
-cargo test --test integration_examples -- --ignored --nocapture
+COMMY_BIN=/path/to/commy cargo test --features e2e --test e2e -- --test-threads=1
 ```
 
-Tests available:
-- ✅ `test_server_startup` - Server setup and teardown
-- ✅ `test_client_connection` - Basic connectivity
-- ✅ `test_client_authentication` - Auth flows
-- ✅ `test_basic_client_example_pattern` - Full workflow
-- ✅ `test_multiple_clients` - Concurrent clients
+They cover connecting and authenticating, the service lifecycle and heartbeat, several concurrent
+clients, TLS root pinning, remote-mode range exchange, and resize rotation (fill and abort). CI runs
+them in the `e2e (real commy server)` job.
 
 ## Next Steps
 
