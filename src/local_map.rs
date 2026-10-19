@@ -173,6 +173,11 @@ impl LocalMap {
         self.view.as_mut_ptr()
     }
 
+    /// Base pointer of the SDK-only writable alias (the trap writes inbound ranges through it).
+    pub fn alias_ptr(&mut self) -> *mut u8 {
+        self.alias.as_mut_ptr()
+    }
+
     /// Write into the caller's view (what the program itself does). False when out of bounds.
     pub fn write_view(&mut self, offset: u64, bytes: &[u8]) -> bool {
         let Some(end) = offset.checked_add(bytes.len() as u64) else {
