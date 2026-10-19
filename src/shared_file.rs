@@ -344,22 +344,26 @@ impl SharedFile {
             if end > self.map.len() as u64 {
                 continue;
             }
-            // Only the scanned part can be re-baselined from live bytes today; trapped pages need
-            // dirty-ranges `Region::rebaseline` (they report the range again, which is harmless).
             let (start, end) = (r.offset as usize, end as usize);
-            let from = start.max(self.scan_base);
-            if from >= end {
-                if self.trap.is_some() {
-                    n += 1;
-                }
-                continue;
+            // Trapped pages: baseline from the live bytes without writing (a write-back could
+            // overwrite a newer foreign write).
+            let region_len = self.trap.as_ref().map_or(0, |t| t.region_len);
+            let mut ok = true;
+            if let (Some(t), true) = (self.trap.as_mut(), start < region_len) {
+                ok &= t
+                    .region
+                    .rebaseline(start, end.min(region_len) - start)
+                    .is_ok();
             }
-            let live = &self.map.view()[from..end];
-            if self
-                .scanner
-                .apply_remote(from - self.scan_base, live)
-                .is_ok()
-            {
+            let from = start.max(self.scan_base);
+            if from < end {
+                let live = &self.map.view()[from..end];
+                ok &= self
+                    .scanner
+                    .apply_remote(from - self.scan_base, live)
+                    .is_ok();
+            }
+            if ok {
                 n += 1;
             }
         }
@@ -779,5 +783,36 @@ mod tests {
         let mut again = SharedFile::new(*m, 5);
         // SAFETY: as in `armed`.
         unsafe { again.arm_trap(64) }.unwrap();
+    }
+
+    #[test]
+    fn ranges_updated_rebaselines_trapped_pages_without_writing() {
+        let (_d, mut s) = armed(2 * page(), 64);
+        s.write_range(0, &[1]).unwrap(); // dirties the page, capturing its baseline
+        assert!(s.foreign_write_for_test(100, &[7, 7, 7]));
+        let upd = RangesUpdated {
+            file_id: 5,
+            seq: 3,
+            ranges: vec![ByteRange {
+                offset: 100,
+                len: 3,
+            }],
+        };
+        assert_eq!(s.on_ranges_updated(&upd), 1);
+        assert_eq!(&s.view()[100..103], &[7, 7, 7], "live bytes untouched");
+        assert_eq!(
+            s.commit_local(),
+            vec![vec![ByteRange { offset: 0, len: 1 }]],
+            "only the local write is reported"
+        );
+    }
+
+    #[test]
+    fn foreign_write_on_a_dirty_trapped_page_echoes_without_ranges_updated() {
+        // Control for the test above.
+        let (_d, mut s) = armed(2 * page(), 64);
+        s.write_range(0, &[1]).unwrap();
+        assert!(s.foreign_write_for_test(100, &[7, 7, 7]));
+        assert_eq!(s.commit_local()[0].len(), 2);
     }
 }

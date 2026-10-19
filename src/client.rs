@@ -753,6 +753,22 @@ impl Client {
         Ok(Some(file_id))
     }
 
+    /// Trap writes to a locally mapped service instead of scanning every page at flush
+    /// ([`SharedFile::arm_trap`]); `pool_pages / 2` pages are trapped. Opt-in.
+    ///
+    /// # Safety
+    /// While armed, no thread may block `SIGSEGV`/`SIGBUS` while writing the mapping (Unix), and
+    /// nothing may read from the OS into it.
+    pub async unsafe fn arm_shared_trap(&self, service_id: &str, pool_pages: usize) -> Result<()> {
+        let mut shared = self.shared.write().await;
+        let file = shared.get_mut(service_id).ok_or_else(|| {
+            CommyError::NotFound(format!("service {service_id} is not mapped locally"))
+        })?;
+        // SAFETY: the caller upholds the contract above.
+        unsafe { file.arm_trap(pool_pages) }
+            .map_err(|e| CommyError::InvalidState(format!("write trap not armed: {e:?}")))
+    }
+
     /// Write into a locally mapped service. Nothing is sent until [`Client::flush_shared`].
     pub async fn shared_write(&self, service_id: &str, offset: u64, bytes: &[u8]) -> Result<()> {
         let mut shared = self.shared.write().await;
