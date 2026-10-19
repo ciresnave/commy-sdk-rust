@@ -8,7 +8,7 @@
 //! Scan mode is the safe default; the write trap (S3) will replace the diff, not this API.
 
 use crate::local_map::LocalMap;
-use commy_wire::RangeFrame;
+use commy_wire::{ByteRange, RangeFrame, RangesUpdated, MAX_RANGES_PER_MESSAGE};
 use dirty_ranges::Scanner;
 
 /// Why an inbound frame was not applied.
@@ -103,6 +103,63 @@ impl SharedFile {
                 )
             })
             .collect()
+    }
+
+    /// Local-mode commit: diff against the baseline and return the changed ranges, in messages of
+    /// at most `MAX_RANGES_PER_MESSAGE` ranges. No data travels; the server reads the shared file.
+    pub fn commit_local(&mut self) -> Vec<Vec<ByteRange>> {
+        let changed = self
+            .scanner
+            .scan(self.map.view())
+            .expect("scanner and mapping have the same length");
+        changed
+            .chunks(MAX_RANGES_PER_MESSAGE)
+            .map(|c| {
+                c.iter()
+                    .map(|r| ByteRange {
+                        offset: r.offset as u64,
+                        len: r.len as u64,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Another process changed these ranges of the shared file: take the live bytes as the new
+    /// baseline so they are not reported as local changes. An unflushed local write overlapping a
+    /// range is absorbed (the last writer to the mapping wins). Ranges outside the file are
+    /// ignored. Returns how many ranges were re-baselined.
+    pub fn on_ranges_updated(&mut self, u: &RangesUpdated) -> usize {
+        if u.file_id != self.file_id {
+            return 0;
+        }
+        self.last_applied = self.last_applied.max(u.seq);
+        let mut n = 0;
+        for r in &u.ranges {
+            let Some(end) = r.offset.checked_add(r.len) else {
+                continue;
+            };
+            if end > self.map.len() as u64 {
+                continue;
+            }
+            let live = &self.map.view()[r.offset as usize..end as usize];
+            if self.scanner.apply_remote(r.offset as usize, live).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// The server's answer to a flush. A lower `seq` than already seen is legal; keep the max.
+    pub fn on_flush_ack(&mut self, seq: u64) {
+        self.last_applied = self.last_applied.max(seq);
+        self.seq = self.seq.max(seq);
+    }
+
+    /// Simulate another process writing the shared file (through the SDK-only alias).
+    #[cfg(test)]
+    pub(crate) fn foreign_write_for_test(&mut self, offset: u64, bytes: &[u8]) -> bool {
+        self.map.apply_inbound(offset, bytes)
     }
 
     /// Apply an inbound frame to the mapping and the baseline.
@@ -225,6 +282,107 @@ mod tests {
             (frames[0].offset, frames[0].data.as_slice()),
             (0, &[1u8][..])
         );
+    }
+
+    #[test]
+    fn commit_local_reports_ranges_without_data_and_advances_baseline() {
+        let (_d, mut s) = shared(8192);
+        s.write_range(10, &[1, 2]).unwrap();
+        s.write_range(5000, &[3]).unwrap();
+        let msgs = s.commit_local();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(
+            msgs[0],
+            vec![
+                ByteRange { offset: 10, len: 2 },
+                ByteRange {
+                    offset: 5000,
+                    len: 1
+                }
+            ]
+        );
+        assert!(s.commit_local().is_empty());
+    }
+
+    #[test]
+    fn commit_local_splits_at_the_range_cap() {
+        let (_d, mut s) = shared(8192);
+        // 1025 isolated single-byte changes: every other byte.
+        for i in 0..=MAX_RANGES_PER_MESSAGE as u64 {
+            s.write_range(i * 2, &[1]).unwrap();
+        }
+        let msgs = s.commit_local();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].len(), MAX_RANGES_PER_MESSAGE);
+        assert_eq!(msgs[1].len(), 1);
+        for m in &msgs {
+            commy_wire::validate_ranges(m).unwrap();
+        }
+    }
+
+    #[test]
+    fn ranges_updated_rebaselines_so_foreign_writes_do_not_echo() {
+        let (_d, mut s) = shared(8192);
+        // Another process writes the shared file: simulate through the SDK-only alias.
+        assert!(s.map.apply_inbound(100, &[7, 7, 7]));
+        let n = s.on_ranges_updated(&RangesUpdated {
+            file_id: 5,
+            seq: 3,
+            ranges: vec![ByteRange {
+                offset: 100,
+                len: 3,
+            }],
+        });
+        assert_eq!(n, 1);
+        assert!(s.commit_local().is_empty(), "foreign write echoed back");
+    }
+
+    #[test]
+    fn foreign_write_without_ranges_updated_would_echo() {
+        // Control for the test above: without the re-baseline the same write is reported.
+        let (_d, mut s) = shared(8192);
+        assert!(s.map.apply_inbound(100, &[7, 7, 7]));
+        assert_eq!(s.commit_local().len(), 1);
+    }
+
+    #[test]
+    fn ranges_updated_for_another_file_or_outside_the_file_is_ignored() {
+        let (_d, mut s) = shared(4096);
+        assert!(s.map.apply_inbound(0, &[9]));
+        let other = RangesUpdated {
+            file_id: 6,
+            seq: 1,
+            ranges: vec![ByteRange { offset: 0, len: 1 }],
+        };
+        assert_eq!(s.on_ranges_updated(&other), 0);
+        let outside = RangesUpdated {
+            file_id: 5,
+            seq: 1,
+            ranges: vec![
+                ByteRange {
+                    offset: 4095,
+                    len: 2,
+                },
+                ByteRange {
+                    offset: u64::MAX,
+                    len: 2,
+                },
+            ],
+        };
+        assert_eq!(s.on_ranges_updated(&outside), 0);
+        assert_eq!(
+            s.commit_local().len(),
+            1,
+            "byte 0 is still a pending change"
+        );
+    }
+
+    #[test]
+    fn flush_ack_keeps_the_maximum_seq() {
+        let (_d, mut s) = shared(4096);
+        s.on_flush_ack(10);
+        s.on_flush_ack(4);
+        assert_eq!(s.seq(), 10);
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::error::{CommyError, Result};
 use crate::local_map::{LocalMap, LocalMapOutcome, NegotiatedFile};
 use crate::message::{ClientMessage, ServerMessage};
 use crate::service::Service;
+use crate::shared_file::SharedFile;
 use crate::state::{create_shared_state, SharedState};
 use crate::virtual_file::VirtualVariableFile;
 use crate::watcher::VariableFileWatcher;
@@ -45,6 +46,9 @@ pub struct Client {
 
     /// File watcher for change detection
     file_watcher: Arc<RwLock<Option<Arc<VariableFileWatcher>>>>,
+
+    /// Services mapped locally (scan mode), by service id
+    shared: Arc<RwLock<std::collections::HashMap<String, SharedFile>>>,
 
     /// Background heartbeat task handle
     #[allow(dead_code)]
@@ -92,6 +96,7 @@ impl Client {
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
+            shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
             heartbeat_task: Arc::new(RwLock::new(None)),
         }
     }
@@ -115,6 +120,7 @@ impl Client {
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
+            shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
             heartbeat_task: Arc::new(RwLock::new(None)),
         }
     }
@@ -706,6 +712,121 @@ impl Client {
                     ))
                 }
             }
+        }
+    }
+
+    /// Map `service_id` locally when the server offers it (see [`Client::negotiate_local`]) and
+    /// start tracking it in scan mode. Returns the file id when local mode is active, `None` when
+    /// the service stays on WSS ranges.
+    pub async fn open_shared(&self, service_id: &str) -> Result<Option<u32>> {
+        let negotiated = self.negotiate_local(service_id).await?;
+        let Some(map) = negotiated.local else {
+            return Ok(None);
+        };
+        let file_id = negotiated.file_id;
+        self.shared
+            .write()
+            .await
+            .insert(service_id.to_string(), SharedFile::new(map, file_id));
+        Ok(Some(file_id))
+    }
+
+    /// Write into a locally mapped service. Nothing is sent until [`Client::flush_shared`].
+    pub async fn shared_write(&self, service_id: &str, offset: u64, bytes: &[u8]) -> Result<()> {
+        let mut shared = self.shared.write().await;
+        let file = shared.get_mut(service_id).ok_or_else(|| {
+            CommyError::NotFound(format!("service {service_id} is not mapped locally"))
+        })?;
+        file.write_range(offset, bytes).map_err(|_| {
+            CommyError::InvalidOffset(format!("write at {offset} is outside the file"))
+        })
+    }
+
+    /// Report what changed in a locally mapped service to the server, one `RangesChanged` per
+    /// batch of up to 1024 ranges, each answered by a `FlushAck`. Returns the highest `seq` seen.
+    pub async fn flush_shared(&self, service_id: &str) -> Result<u64> {
+        self.flush_shared_with_timeout(service_id, Duration::from_secs(10))
+            .await
+    }
+
+    async fn flush_shared_with_timeout(&self, service_id: &str, wait: Duration) -> Result<u64> {
+        let (file_id, batches) = {
+            let mut shared = self.shared.write().await;
+            let file = shared.get_mut(service_id).ok_or_else(|| {
+                CommyError::NotFound(format!("service {service_id} is not mapped locally"))
+            })?;
+            (file.file_id(), file.commit_local())
+        };
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection lost during flush_shared".to_string(),
+            ));
+        };
+        let mut seq = 0;
+        for ranges in batches {
+            let request_id = Uuid::new_v4().to_string();
+            conn.send(ClientMessage::RangesChanged(commy_wire::RangesChanged {
+                request_id: request_id.clone(),
+                file_id,
+                ranges,
+            }))
+            .await?;
+            let deadline = tokio::time::Instant::now() + wait;
+            let acked = loop {
+                match tokio::time::timeout_at(deadline, conn.recv()).await {
+                    Ok(Ok(Some(ServerMessage::FlushAck(a)))) if a.request_id == request_id => {
+                        break a.seq
+                    }
+                    Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                        return Err(CommyError::from(code))
+                    }
+                    Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
+                        if let Some(f) = self.shared.write().await.get_mut(service_id) {
+                            f.on_ranges_updated(&u);
+                        }
+                    }
+                    Ok(Ok(Some(_))) => continue,
+                    Ok(Ok(None)) | Ok(Err(_)) => {
+                        return Err(CommyError::ConnectionLost(
+                            "Connection closed during flush_shared".to_string(),
+                        ))
+                    }
+                    Err(_) => return Err(CommyError::Timeout),
+                }
+            };
+            if let Some(f) = self.shared.write().await.get_mut(service_id) {
+                f.on_flush_ack(acked);
+            }
+            seq = seq.max(acked);
+        }
+        Ok(seq)
+    }
+
+    /// Wait up to `wait` for one server message and, if it is a `RangesUpdated` for a locally
+    /// mapped service, re-baseline those ranges so they are not reported as local changes.
+    /// Returns `true` when an update was applied. Other messages are discarded.
+    pub async fn poll_shared_updates(&self, wait: Duration) -> Result<bool> {
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection lost during poll_shared_updates".to_string(),
+            ));
+        };
+        match tokio::time::timeout(wait, conn.recv()).await {
+            Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
+                let mut shared = self.shared.write().await;
+                Ok(shared
+                    .values_mut()
+                    .map(|f| f.on_ranges_updated(&u))
+                    .sum::<usize>()
+                    > 0)
+            }
+            Ok(Ok(Some(_))) => Ok(false),
+            Ok(Ok(None)) | Ok(Err(_)) => Err(CommyError::ConnectionLost(
+                "Connection closed during poll_shared_updates".to_string(),
+            )),
+            Err(_) => Ok(false),
         }
     }
 
@@ -2061,5 +2182,148 @@ mod negotiate_tests {
         let client = Client::new("wss://localhost:9000");
         let res = client.negotiate_local("svc").await;
         assert!(matches!(res, Err(CommyError::ConnectionLost(_))), "{res:?}");
+    }
+}
+
+#[cfg(test)]
+mod shared_tests {
+    use super::*;
+    use crate::local_map::LocalMap;
+    use crate::message::{ClientMessage, ServerMessage};
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+    async fn rig() -> (
+        Client,
+        UnboundedSender<ServerMessage>,
+        UnboundedReceiver<ClientMessage>,
+        tempfile::TempDir,
+    ) {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("svc.bin");
+        let n = d.path().join("n");
+        std::fs::write(&f, vec![0u8; 8192]).unwrap();
+        std::fs::write(&n, "x").unwrap();
+        let LocalMapOutcome::Local(m) = LocalMap::open(&f, &n) else {
+            panic!("local mode expected");
+        };
+        let (conn, to_client, from_client) = Connection::new_for_test();
+        let client = Client::new("wss://localhost:9000");
+        client.inject_connection_for_test(conn).await;
+        client
+            .shared
+            .write()
+            .await
+            .insert("svc".to_string(), SharedFile::new(*m, 5));
+        (client, to_client, from_client, d)
+    }
+
+    fn ack(rid: &str, seq: u64) -> ServerMessage {
+        ServerMessage::FlushAck(commy_wire::FlushAck {
+            request_id: rid.to_string(),
+            file_id: 5,
+            seq,
+        })
+    }
+
+    #[tokio::test]
+    async fn flush_sends_ranges_only_and_adopts_the_ack_seq() {
+        let (client, to_client, mut from_client, _d) = rig().await;
+        client.shared_write("svc", 100, &[1, 2, 3]).await.unwrap();
+        let fut = client.flush_shared("svc");
+        let drive = async {
+            let ClientMessage::RangesChanged(r) = from_client.recv().await.unwrap() else {
+                panic!("expected RangesChanged");
+            };
+            assert_eq!(r.file_id, 5);
+            assert_eq!(
+                r.ranges,
+                vec![commy_wire::ByteRange {
+                    offset: 100,
+                    len: 3
+                }]
+            );
+            to_client.send(ack(&r.request_id, 12)).unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert_eq!(res.unwrap(), 12);
+        // Nothing changed since: a second flush sends nothing and does not wait.
+        assert_eq!(client.flush_shared("svc").await.unwrap(), 0);
+        assert!(from_client.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn flush_without_an_ack_times_out() {
+        let (client, _to_client, mut from_client, _d) = rig().await;
+        client.shared_write("svc", 0, &[1]).await.unwrap();
+        let res = client
+            .flush_shared_with_timeout("svc", Duration::from_millis(100))
+            .await;
+        assert!(matches!(res, Err(CommyError::Timeout)), "{res:?}");
+        assert!(from_client.try_recv().is_ok(), "RangesChanged was sent");
+    }
+
+    #[tokio::test]
+    async fn ack_for_another_request_is_not_accepted() {
+        let (client, to_client, mut from_client, _d) = rig().await;
+        client.shared_write("svc", 0, &[1]).await.unwrap();
+        let fut = client.flush_shared_with_timeout("svc", Duration::from_millis(150));
+        let drive = async {
+            let _ = from_client.recv().await.unwrap();
+            to_client.send(ack("someone-else", 9)).unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::Timeout)), "{res:?}");
+    }
+
+    #[tokio::test]
+    async fn ranges_updated_during_poll_is_rebaselined_and_not_flushed() {
+        let (client, to_client, mut from_client, _d) = rig().await;
+        // A foreign process wrote bytes 50..52 of the shared file.
+        {
+            let mut shared = client.shared.write().await;
+            assert!(shared
+                .get_mut("svc")
+                .unwrap()
+                .foreign_write_for_test(50, &[8, 8]));
+        }
+        to_client
+            .send(ServerMessage::RangesUpdated(commy_wire::RangesUpdated {
+                file_id: 5,
+                seq: 3,
+                ranges: vec![commy_wire::ByteRange { offset: 50, len: 2 }],
+            }))
+            .unwrap();
+        assert!(client
+            .poll_shared_updates(Duration::from_millis(200))
+            .await
+            .unwrap());
+        assert_eq!(client.flush_shared("svc").await.unwrap(), 0);
+        assert!(from_client.try_recv().is_err(), "foreign write echoed back");
+    }
+
+    #[tokio::test]
+    async fn poll_with_nothing_pending_returns_false() {
+        let (client, _to_client, _from_client, _d) = rig().await;
+        assert!(!client
+            .poll_shared_updates(Duration::from_millis(50))
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn unknown_service_is_not_found_and_out_of_bounds_is_invalid_offset() {
+        let (client, _t, _f, _d) = rig().await;
+        assert!(matches!(
+            client.shared_write("nope", 0, &[1]).await,
+            Err(CommyError::NotFound(_))
+        ));
+        assert!(matches!(
+            client.flush_shared("nope").await,
+            Err(CommyError::NotFound(_))
+        ));
+        assert!(matches!(
+            client.shared_write("svc", 8191, &[1, 2]).await,
+            Err(CommyError::InvalidOffset(_))
+        ));
     }
 }

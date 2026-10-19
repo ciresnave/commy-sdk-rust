@@ -88,6 +88,9 @@ pub enum ClientMessage {
     /// Ask whether a service file may be mapped locally (commy-wire local mapping handshake)
     GetServiceFilePath(commy_wire::GetServiceFilePath),
 
+    /// Local sender: these ranges of the shared mapping changed (no data travels)
+    RangesChanged(commy_wire::RangesChanged),
+
     /// Echo the nonce read from the offered side file, proving the same filesystem view
     ConfirmLocal(commy_wire::ConfirmLocal),
 
@@ -165,6 +168,12 @@ pub enum ServerMessage {
 
     /// The file id for range frames, and (when offered) the local path and nonce path
     ServiceFilePath(commy_wire::ServiceFilePath),
+
+    /// The server accepted a flush and assigned it this sequence number
+    FlushAck(commy_wire::FlushAck),
+
+    /// Local receiver: these ranges changed in the shared file at `seq` (no data)
+    RangesUpdated(commy_wire::RangesUpdated),
 
     /// The server accepted the nonce; local mapping is confirmed
     ConfirmLocalAck(commy_wire::ConfirmLocalAck),
