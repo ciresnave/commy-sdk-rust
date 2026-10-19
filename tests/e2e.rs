@@ -238,3 +238,57 @@ async fn resize_rotation_abort_keeps_the_old_file_and_writers_resume() {
     assert!(a.poll_shared_updates(WAIT).await.unwrap());
     assert_eq!(a.shared_read(&svc, 100, 7).await.unwrap(), b"resumed");
 }
+
+#[tokio::test]
+async fn connect_authenticate_and_disconnect() {
+    let s = Server::start().await;
+    let c = s.client();
+    c.connect().await.expect("connect");
+    let ctx = c
+        .authenticate("t_auth", auth::api_key("demo_key".to_string()))
+        .await
+        .expect("dev authentication accepts any credential");
+    assert_eq!(ctx.tenant_id, "t_auth");
+    assert_eq!(c.authenticated_tenants().await, vec!["t_auth".to_string()]);
+    c.disconnect().await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn service_lifecycle_and_heartbeat() {
+    let s = Server::start().await;
+    let c = s.session("t_life").await;
+    let id = c.create_service("t_life", "config", 4096).await.unwrap();
+    let svc = c.get_service("t_life", "config").await.unwrap();
+    assert_eq!(svc.id, id);
+    assert!(
+        c.get_service("t_life", "missing").await.is_err(),
+        "get_service must not create"
+    );
+    c.heartbeat().await.unwrap();
+    c.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn several_clients_work_at_once() {
+    let s = Server::start().await;
+    let mut tasks = Vec::new();
+    for i in 0..3 {
+        let c = s.client();
+        tasks.push(tokio::spawn(async move {
+            c.connect().await.expect("connect");
+            c.authenticate(
+                format!("t_multi_{i}"),
+                auth::api_key("demo_key".to_string()),
+            )
+            .await
+            .expect("authenticate");
+            c.create_service(&format!("t_multi_{i}"), "svc", 4096)
+                .await
+                .expect("create_service");
+            c.disconnect().await.expect("disconnect");
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+}
