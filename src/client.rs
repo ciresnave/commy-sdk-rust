@@ -1112,6 +1112,105 @@ impl Client {
         }
     }
 
+    /// Give `client_id` permissions (`tenant:read|write|admin`, `service:read|write|admin|resize`),
+    /// tenant-wide or, with `service_id`, on that service. The caller needs admin rights there.
+    pub async fn grant(
+        &self,
+        client_id: &str,
+        service_id: Option<&str>,
+        permissions: &[&str],
+    ) -> Result<()> {
+        let req = commy_wire::Grant {
+            request_id: Uuid::new_v4().to_string(),
+            client_id: client_id.to_string(),
+            service_id: service_id.map(str::to_string),
+            permissions: permissions.iter().map(|p| p.to_string()).collect(),
+        };
+        req.validate()
+            .map_err(|e| CommyError::InvalidRequest(e.to_string()))?;
+        let id = req.request_id.clone();
+        self.grant_round_trip(ClientMessage::Grant(req), &id)
+            .await
+            .map(|_| ())
+    }
+
+    /// Take `permissions` from `client_id`. With `service_id` and no permissions, the client is
+    /// removed from that service: it gets `Loss{REVOKED}` and the file rotates (see
+    /// [`Client::complete_rotation`]).
+    pub async fn revoke(
+        &self,
+        client_id: &str,
+        service_id: Option<&str>,
+        permissions: &[&str],
+    ) -> Result<()> {
+        let req = commy_wire::Revoke {
+            request_id: Uuid::new_v4().to_string(),
+            client_id: client_id.to_string(),
+            service_id: service_id.map(str::to_string),
+            permissions: permissions.iter().map(|p| p.to_string()).collect(),
+        };
+        req.validate()
+            .map_err(|e| CommyError::InvalidRequest(e.to_string()))?;
+        let id = req.request_id.clone();
+        self.grant_round_trip(ClientMessage::Revoke(req), &id)
+            .await
+            .map(|_| ())
+    }
+
+    /// List grants, optionally only those of one client and/or one service.
+    pub async fn list_grants(
+        &self,
+        client_id: Option<&str>,
+        service_id: Option<&str>,
+    ) -> Result<Vec<commy_wire::GrantEntry>> {
+        let id = Uuid::new_v4().to_string();
+        let msg = ClientMessage::ListGrants(commy_wire::ListGrants {
+            request_id: id.clone(),
+            client_id: client_id.map(str::to_string),
+            service_id: service_id.map(str::to_string),
+        });
+        match self.grant_round_trip(msg, &id).await? {
+            ServerMessage::Grants(g) => Ok(g.entries),
+            _ => unreachable!("grant_round_trip returns only GrantAck or Grants"),
+        }
+    }
+
+    /// Send a grant-family request and wait for the reply carrying its `request_id`.
+    async fn grant_round_trip(
+        &self,
+        msg: ClientMessage,
+        request_id: &str,
+    ) -> Result<ServerMessage> {
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection lost during a grant request".to_string(),
+            ));
+        };
+        conn.send(msg).await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(reply @ ServerMessage::GrantAck(_)))) if matches!(&reply, ServerMessage::GrantAck(a) if a.request_id == request_id) => {
+                    return Ok(reply)
+                }
+                Ok(Ok(Some(reply @ ServerMessage::Grants(_)))) if matches!(&reply, ServerMessage::Grants(g) if g.request_id == request_id) => {
+                    return Ok(reply)
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                    return Err(CommyError::from(code))
+                }
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during a grant request".to_string(),
+                    ))
+                }
+                Err(_) => return Err(CommyError::Timeout),
+            }
+        }
+    }
+
     /// Ask the server to replace a service's file. Returns the rotation id. A resize also needs
     /// the other SDKs to drain; this client then sees `RotationPending` / `RotationCommit` like the
     /// others.
@@ -3800,5 +3899,110 @@ mod rotation_tests {
         };
         let (res, ()) = tokio::join!(fut, drive);
         assert_eq!(res.unwrap(), "rot-9");
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    use super::*;
+    use crate::connection::Connection;
+    use crate::message::{ClientMessage, ServerMessage};
+
+    async fn client() -> (
+        Client,
+        tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+        tokio::sync::mpsc::UnboundedReceiver<ClientMessage>,
+    ) {
+        let (conn, to_client, from_client) = Connection::new_for_test();
+        let client = Client::new("wss://localhost:9000");
+        client.inject_connection_for_test(conn).await;
+        (client, to_client, from_client)
+    }
+
+    #[tokio::test]
+    async fn grant_sends_the_request_and_waits_for_its_ack() {
+        let (c, to, mut from) = client().await;
+        let fut = c.grant("bob", Some("svc"), &["service:read", "service:write"]);
+        let drive = async {
+            let ClientMessage::Grant(g) = from.recv().await.unwrap() else {
+                panic!("expected Grant");
+            };
+            assert_eq!(g.client_id, "bob");
+            assert_eq!(g.service_id.as_deref(), Some("svc"));
+            assert_eq!(g.permissions, ["service:read", "service:write"]);
+            // An ack for another request is not ours.
+            to.send(ServerMessage::GrantAck(commy_wire::GrantAck {
+                request_id: "other".into(),
+            }))
+            .unwrap();
+            to.send(ServerMessage::GrantAck(commy_wire::GrantAck {
+                request_id: g.request_id,
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        res.unwrap();
+    }
+
+    #[tokio::test]
+    async fn revoke_and_list_grants_round_trip() {
+        let (c, to, mut from) = client().await;
+        let fut = c.revoke("bob", Some("svc"), &[]);
+        let drive = async {
+            let ClientMessage::Revoke(r) = from.recv().await.unwrap() else {
+                panic!("expected Revoke");
+            };
+            assert!(r.permissions.is_empty());
+            to.send(ServerMessage::GrantAck(commy_wire::GrantAck {
+                request_id: r.request_id,
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        res.unwrap();
+
+        let fut = c.list_grants(Some("bob"), None);
+        let drive = async {
+            let ClientMessage::ListGrants(l) = from.recv().await.unwrap() else {
+                panic!("expected ListGrants");
+            };
+            assert_eq!((l.client_id.as_deref(), l.service_id), (Some("bob"), None));
+            to.send(ServerMessage::Grants(commy_wire::Grants {
+                request_id: l.request_id,
+                entries: vec![commy_wire::GrantEntry {
+                    client_id: "bob".into(),
+                    service_id: Some("svc".into()),
+                    permissions: vec!["service:read".into()],
+                }],
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        let entries = res.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].permissions, ["service:read"]);
+    }
+
+    #[tokio::test]
+    async fn invalid_grants_are_refused_before_sending_and_server_errors_surface() {
+        let (c, to, mut from) = client().await;
+        assert!(matches!(
+            c.grant("", None, &["tenant:read"]).await,
+            Err(CommyError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            c.grant("bob", None, &[]).await,
+            Err(CommyError::InvalidRequest(_))
+        ));
+        assert!(from.try_recv().is_err(), "nothing may have been sent");
+        to.send(ServerMessage::Error {
+            code: crate::message::ErrorCode::PermissionDenied,
+            message: "no".into(),
+        })
+        .unwrap();
+        assert!(matches!(
+            c.grant("bob", None, &["tenant:read"]).await,
+            Err(CommyError::PermissionDenied(_))
+        ));
     }
 }

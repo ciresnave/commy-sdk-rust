@@ -97,6 +97,15 @@ pub enum ClientMessage {
     /// Ask the server to replace a service's file (resize or revocation)
     RotateRequest(commy_wire::RotateRequest),
 
+    /// Give a client permissions, tenant-wide or on one service
+    Grant(commy_wire::Grant),
+
+    /// Take permissions away; with a service and no permissions, remove the client from it
+    Revoke(commy_wire::Revoke),
+
+    /// List grants, optionally of one client and/or one service
+    ListGrants(commy_wire::ListGrants),
+
     /// This client has flushed everything into the old file (resize drain barrier)
     RotationDrained(commy_wire::RotationDrained),
 
@@ -195,6 +204,12 @@ pub enum ServerMessage {
 
     /// The rotation was accepted; it ends with a `RotationCommit`
     RotationAccepted(commy_wire::RotationAccepted),
+
+    /// A `Grant` or `Revoke` took effect
+    GrantAck(commy_wire::GrantAck),
+
+    /// The answer to `ListGrants`
+    Grants(commy_wire::Grants),
 
     /// Resize drain barrier is open: flush and answer `RotationDrained`
     RotationPending(commy_wire::RotationPending),
