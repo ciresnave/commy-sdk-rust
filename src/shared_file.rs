@@ -32,6 +32,8 @@ pub enum Applied {
 #[derive(Debug, PartialEq, Eq)]
 pub enum WriteError {
     OutOfBounds,
+    /// A rotation drain barrier is open; writes resume on the new file.
+    Draining,
 }
 
 /// Where a file's bytes live: a mapping shared with the server (local mode) or a private copy
@@ -86,6 +88,8 @@ pub struct SharedFile {
     file_id: u32,
     seq: u64,
     last_applied: u64,
+    generation: u64,
+    draining: bool,
 }
 
 impl SharedFile {
@@ -98,6 +102,8 @@ impl SharedFile {
             file_id,
             seq: 0,
             last_applied: 0,
+            generation: 0,
+            draining: false,
         }
     }
 
@@ -111,12 +117,51 @@ impl SharedFile {
             file_id,
             seq,
             last_applied: seq,
+            generation: 0,
+            draining: false,
         }
     }
 
     /// True when the bytes are a mapping shared with the server (changes travel as ranges only).
     pub fn is_local(&self) -> bool {
         matches!(self.map, Backing::Mapped(_))
+    }
+
+    /// Rotation generation this file belongs to (0 before any rotation).
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn set_generation(&mut self, generation: u64) {
+        self.generation = generation;
+    }
+
+    /// Open or close the drain barrier: while open, `write_range` is refused.
+    pub fn set_draining(&mut self, draining: bool) {
+        self.draining = draining;
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.draining
+    }
+
+    /// The highest sequence this file has sent or seen.
+    pub fn last_seq(&self) -> u64 {
+        self.seq.max(self.last_applied)
+    }
+
+    /// Unflushed local writes as `(offset, bytes)`, found by diffing against the baseline (which
+    /// advances). Used to carry writes into the new file after a revocation.
+    pub fn take_pending_writes(&mut self) -> Vec<(u64, Vec<u8>)> {
+        let changed = self
+            .scanner
+            .scan(self.map.view())
+            .expect("scanner and mapping have the same length");
+        let view = self.map.view();
+        changed
+            .iter()
+            .map(|r| (r.offset as u64, view[r.offset..r.offset + r.len].to_vec()))
+            .collect()
     }
 
     pub fn file_id(&self) -> u32 {
@@ -139,6 +184,9 @@ impl SharedFile {
 
     /// Copy `bytes` into the mapping at `offset`. Nothing is sent until [`SharedFile::commit`].
     pub fn write_range(&mut self, offset: u64, bytes: &[u8]) -> Result<(), WriteError> {
+        if self.draining {
+            return Err(WriteError::Draining);
+        }
         if self.map.write_view(offset, bytes) {
             Ok(())
         } else {

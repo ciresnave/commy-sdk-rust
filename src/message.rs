@@ -92,6 +92,12 @@ pub enum ClientMessage {
     #[serde(skip)]
     Range(commy_wire::RangeFrame),
 
+    /// Ask the server to replace a service's file (resize or revocation)
+    RotateRequest(commy_wire::RotateRequest),
+
+    /// This client has flushed everything into the old file (resize drain barrier)
+    RotationDrained(commy_wire::RotationDrained),
+
     /// Remote sender: the frames for one flush are complete
     FlushEnd(commy_wire::FlushEnd),
 
@@ -178,6 +184,18 @@ pub enum ServerMessage {
 
     /// The file id for range frames, and (when offered) the local path and nonce path
     ServiceFilePath(commy_wire::ServiceFilePath),
+
+    /// The rotation was accepted; it ends with a `RotationCommit`
+    RotationAccepted(commy_wire::RotationAccepted),
+
+    /// Resize drain barrier is open: flush and answer `RotationDrained`
+    RotationPending(commy_wire::RotationPending),
+
+    /// The new file is live
+    RotationCommit(commy_wire::RotationCommit),
+
+    /// Writes of this client were lost
+    Loss(commy_wire::Loss),
 
     /// Remote receiver: the bytes of one range frame (a WebSocket binary message)
     #[serde(skip)]

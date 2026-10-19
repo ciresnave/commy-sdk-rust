@@ -16,6 +16,25 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+/// Something that happened to a mapped service, as seen by [`Client::poll_shared_events`].
+#[derive(Debug)]
+pub enum SharedEvent {
+    /// Nothing relevant arrived in time.
+    None,
+    /// Another writer's changes were applied (ranges re-baselined or frames written).
+    Updated,
+    /// A resize drain barrier opened: call [`Client::drain_for_rotation`].
+    RotationPending(commy_wire::RotationPending),
+    /// The new file is live: call [`Client::complete_rotation`].
+    RotationCommit(commy_wire::RotationCommit),
+    /// Writes were lost. For `ROTATION_STRAGGLER`, `REVOKED` and unknown kinds the mapping has
+    /// been dropped; `RESYNC_OVERWROTE` keeps it.
+    Loss(commy_wire::Loss),
+}
+
+/// Extra time after `deadline_ms` before a missing `RotationCommit` counts as a failed rotation.
+const ROTATION_COMMIT_GRACE: Duration = Duration::from_secs(5);
+
 /// Largest remote mirror accepted from a `Resync` (guards against a hostile or confused size).
 const MAX_REMOTE_FILE_BYTES: usize = 1 << 30;
 
@@ -740,8 +759,13 @@ impl Client {
         let file = shared.get_mut(service_id).ok_or_else(|| {
             CommyError::NotFound(format!("service {service_id} is not mapped locally"))
         })?;
-        file.write_range(offset, bytes).map_err(|_| {
-            CommyError::InvalidOffset(format!("write at {offset} is outside the file"))
+        file.write_range(offset, bytes).map_err(|e| match e {
+            crate::shared_file::WriteError::Draining => {
+                CommyError::InvalidState("a rotation is draining this service".to_string())
+            }
+            crate::shared_file::WriteError::OutOfBounds => {
+                CommyError::InvalidOffset(format!("write at {offset} is outside the file"))
+            }
         })
     }
 
@@ -916,37 +940,272 @@ impl Client {
         Ok(file_id)
     }
 
-    /// Wait up to `wait` for one server message and, if it is a `RangesUpdated` for a locally
-    /// mapped service, re-baseline those ranges so they are not reported as local changes.
-    /// Returns `true` when an update was applied. Other messages are discarded.
+    /// Wait up to `wait` for one server message and, if it is a `RangesUpdated` or range frame for
+    /// a mapped service, apply it so it is not reported as a local change. Returns `true` when an
+    /// update was applied. Other messages are discarded; use [`Client::poll_shared_events`] to see
+    /// rotation and loss events.
     pub async fn poll_shared_updates(&self, wait: Duration) -> Result<bool> {
+        Ok(matches!(
+            self.poll_shared_events(wait).await?,
+            SharedEvent::Updated
+        ))
+    }
+
+    /// Like [`Client::poll_shared_updates`], but also reports rotation and loss events.
+    pub async fn poll_shared_events(&self, wait: Duration) -> Result<SharedEvent> {
         let guard = self.connection.read().await;
         let Some(conn) = guard.as_ref() else {
             return Err(CommyError::ConnectionLost(
-                "Connection lost during poll_shared_updates".to_string(),
+                "Connection lost during poll_shared_events".to_string(),
             ));
         };
-        match tokio::time::timeout(wait, conn.recv()).await {
-            Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
-                let mut shared = self.shared.write().await;
-                Ok(shared
-                    .values_mut()
-                    .map(|f| f.on_ranges_updated(&u))
-                    .sum::<usize>()
-                    > 0)
+        let msg = match tokio::time::timeout(wait, conn.recv()).await {
+            Ok(Ok(Some(m))) => m,
+            Ok(Ok(None)) | Ok(Err(_)) => {
+                return Err(CommyError::ConnectionLost(
+                    "Connection closed during poll_shared_events".to_string(),
+                ))
             }
-            Ok(Ok(Some(ServerMessage::Range(frame)))) => {
+            Err(_) => return Ok(SharedEvent::None),
+        };
+        drop(guard);
+        Ok(self.apply_event(msg).await)
+    }
+
+    async fn apply_event(&self, msg: ServerMessage) -> SharedEvent {
+        match msg {
+            ServerMessage::RangesUpdated(u) => {
                 let mut shared = self.shared.write().await;
-                Ok(shared
-                    .values_mut()
-                    .any(|f| f.apply_inbound(&frame) == Ok(crate::shared_file::Applied::Applied)))
+                let n: usize = shared.values_mut().map(|f| f.on_ranges_updated(&u)).sum();
+                if n > 0 {
+                    SharedEvent::Updated
+                } else {
+                    SharedEvent::None
+                }
             }
-            Ok(Ok(Some(_))) => Ok(false),
-            Ok(Ok(None)) | Ok(Err(_)) => Err(CommyError::ConnectionLost(
-                "Connection closed during poll_shared_updates".to_string(),
-            )),
-            Err(_) => Ok(false),
+            ServerMessage::Range(frame) => {
+                let mut shared = self.shared.write().await;
+                let applied = shared
+                    .values_mut()
+                    .any(|f| f.apply_inbound(&frame) == Ok(crate::shared_file::Applied::Applied));
+                if applied {
+                    SharedEvent::Updated
+                } else {
+                    SharedEvent::None
+                }
+            }
+            ServerMessage::RotationPending(p) => SharedEvent::RotationPending(p),
+            ServerMessage::RotationCommit(c) => SharedEvent::RotationCommit(c),
+            ServerMessage::Loss(l) => {
+                if l.kind != commy_wire::LossKind::ResyncOverwrote {
+                    let mut shared = self.shared.write().await;
+                    if shared.get(&l.service_id).map(SharedFile::file_id) == Some(l.file_id) {
+                        shared.remove(&l.service_id);
+                    }
+                }
+                SharedEvent::Loss(l)
+            }
+            _ => SharedEvent::None,
         }
+    }
+
+    /// Ask the server to replace a service's file. Returns the rotation id. A resize also needs
+    /// the other SDKs to drain; this client then sees `RotationPending` / `RotationCommit` like the
+    /// others.
+    pub async fn request_rotation(
+        &self,
+        service_id: &str,
+        reason: commy_wire::RotateReason,
+        new_size: Option<u64>,
+        revoke_client_id: Option<String>,
+    ) -> Result<String> {
+        let req = commy_wire::RotateRequest {
+            request_id: Uuid::new_v4().to_string(),
+            service_id: service_id.to_string(),
+            reason,
+            new_size,
+            revoke_client_id,
+        };
+        req.validate()
+            .map_err(|e| CommyError::InvalidRequest(e.to_string()))?;
+        let request_id = req.request_id.clone();
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection lost during request_rotation".to_string(),
+            ));
+        };
+        conn.send(ClientMessage::RotateRequest(req)).await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::RotationAccepted(a)))) if a.request_id == request_id => {
+                    return Ok(a.rotation_id)
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                    return Err(CommyError::from(code))
+                }
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during request_rotation".to_string(),
+                    ))
+                }
+                Err(_) => return Err(CommyError::Timeout),
+            }
+        }
+    }
+
+    /// Answer a resize `RotationPending`: refuse new writes, flush into the old file, send
+    /// `RotationDrained`, wait for `RotationCommit` (at most `deadline_ms` plus a grace period) and
+    /// switch to the new file. Writers get an error until then; old-offset writes are never
+    /// replayed into the new layout.
+    pub async fn drain_for_rotation(
+        &self,
+        p: &commy_wire::RotationPending,
+    ) -> Result<commy_wire::RotationCommit> {
+        let wait = Duration::from_millis(p.deadline_ms);
+        {
+            let mut shared = self.shared.write().await;
+            let file = shared.get_mut(&p.service_id).ok_or_else(|| {
+                CommyError::NotFound(format!("service {} is not mapped", p.service_id))
+            })?;
+            if file.file_id() != p.file_id {
+                return Err(CommyError::InvalidState(format!(
+                    "pending names file {} but {} is mapped",
+                    p.file_id,
+                    file.file_id()
+                )));
+            }
+            file.set_draining(true);
+        }
+        let result = self.drain_inner(p, wait).await;
+        if result.is_err() {
+            if let Some(f) = self.shared.write().await.get_mut(&p.service_id) {
+                f.set_draining(false);
+            }
+        }
+        result
+    }
+
+    async fn drain_inner(
+        &self,
+        p: &commy_wire::RotationPending,
+        wait: Duration,
+    ) -> Result<commy_wire::RotationCommit> {
+        self.flush_shared_with_timeout(&p.service_id, wait).await?;
+        let seq = self
+            .shared
+            .read()
+            .await
+            .get(&p.service_id)
+            .map(SharedFile::last_seq)
+            .unwrap_or(0);
+        let commit = {
+            let guard = self.connection.read().await;
+            let Some(conn) = guard.as_ref() else {
+                return Err(CommyError::ConnectionLost(
+                    "Connection lost during drain_for_rotation".to_string(),
+                ));
+            };
+            conn.send(ClientMessage::RotationDrained(
+                commy_wire::RotationDrained {
+                    request_id: Uuid::new_v4().to_string(),
+                    rotation_id: p.rotation_id.clone(),
+                    file_id: p.file_id,
+                    seq,
+                },
+            ))
+            .await?;
+            let deadline = tokio::time::Instant::now() + wait + ROTATION_COMMIT_GRACE;
+            loop {
+                match tokio::time::timeout_at(deadline, conn.recv()).await {
+                    Ok(Ok(Some(ServerMessage::RotationCommit(c))))
+                        if c.rotation_id == p.rotation_id =>
+                    {
+                        break c
+                    }
+                    Ok(Ok(Some(ServerMessage::Loss(l)))) if l.service_id == p.service_id => {
+                        self.shared.write().await.remove(&p.service_id);
+                        return Err(CommyError::InvalidState(format!(
+                            "dropped from the service: {:?}",
+                            l.kind
+                        )));
+                    }
+                    Ok(Ok(Some(other))) => {
+                        self.apply_event(other).await;
+                    }
+                    Ok(Ok(None)) | Ok(Err(_)) => {
+                        return Err(CommyError::ConnectionLost(
+                            "Connection closed during drain_for_rotation".to_string(),
+                        ))
+                    }
+                    Err(_) => return Err(CommyError::Timeout),
+                }
+            }
+        };
+        self.complete_rotation(&commit).await?;
+        Ok(commit)
+    }
+
+    /// Switch a service to the file named by a `RotationCommit`: re-run the local handshake (or
+    /// `Resync` when no mapping is offered). After a revocation, unflushed local writes are
+    /// written into the new file and flushed; after a resize they are never replayed. A commit
+    /// whose generation is not newer than the mapped one is a duplicate and ignored.
+    pub async fn complete_rotation(&self, c: &commy_wire::RotationCommit) -> Result<()> {
+        let (was_local, pending) = {
+            let mut shared = self.shared.write().await;
+            let Some(file) = shared.get_mut(&c.service_id) else {
+                return Err(CommyError::NotFound(format!(
+                    "service {} is not mapped",
+                    c.service_id
+                )));
+            };
+            if c.generation <= file.generation() {
+                return Ok(());
+            }
+            if file.file_id() != c.old_file_id {
+                return Err(CommyError::InvalidState(format!(
+                    "commit replaces file {} but {} is mapped",
+                    c.old_file_id,
+                    file.file_id()
+                )));
+            }
+            let pending = if c.reason == commy_wire::RotateReason::Revocation {
+                file.take_pending_writes()
+            } else {
+                Vec::new()
+            };
+            let was_local = file.is_local();
+            shared.remove(&c.service_id);
+            (was_local, pending)
+        };
+        let new_id = if was_local {
+            match self.open_shared(&c.service_id).await? {
+                Some(id) => id,
+                None => self.open_remote(&c.service_id).await?,
+            }
+        } else {
+            self.open_remote(&c.service_id).await?
+        };
+        if new_id != c.new_file_id {
+            self.shared.write().await.remove(&c.service_id);
+            return Err(CommyError::InvalidMessage(format!(
+                "server offered file {new_id}, commit named {}",
+                c.new_file_id
+            )));
+        }
+        if let Some(f) = self.shared.write().await.get_mut(&c.service_id) {
+            f.set_generation(c.generation);
+        }
+        if !pending.is_empty() {
+            for (offset, bytes) in &pending {
+                // A write that no longer fits the new layout is dropped, never truncated.
+                let _ = self.shared_write(&c.service_id, *offset, bytes).await;
+            }
+            self.flush_shared(&c.service_id).await?;
+        }
+        Ok(())
     }
 
     /// Start background heartbeat task
@@ -2611,5 +2870,359 @@ mod remote_tests {
         };
         let (res, ()) = tokio::join!(fut, drive);
         assert!(matches!(res, Err(CommyError::Timeout)), "{res:?}");
+    }
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+    use crate::local_map::LocalMap;
+    use crate::message::{ClientMessage, ServerMessage};
+    use commy_wire::{
+        ByteRange, FlushAck, Loss, LossKind, RotateReason, RotationAccepted, RotationCommit,
+        RotationPending,
+    };
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+    struct Rig {
+        client: Client,
+        to_client: UnboundedSender<ServerMessage>,
+        from_client: UnboundedReceiver<ClientMessage>,
+        dir: tempfile::TempDir,
+    }
+
+    /// A client with `svc` mapped locally (file id 5, 8 KiB).
+    async fn rig() -> Rig {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("old.bin");
+        let n = dir.path().join("n");
+        std::fs::write(&f, vec![0u8; 8192]).unwrap();
+        std::fs::write(&n, "x").unwrap();
+        let LocalMapOutcome::Local(m) = LocalMap::open(&f, &n) else {
+            panic!("local mode expected");
+        };
+        let (conn, to_client, from_client) = Connection::new_for_test();
+        let client = Client::new("wss://localhost:9000");
+        client.inject_connection_for_test(conn).await;
+        client
+            .shared
+            .write()
+            .await
+            .insert("svc".to_string(), SharedFile::new(*m, 5));
+        Rig {
+            client,
+            to_client,
+            from_client,
+            dir,
+        }
+    }
+
+    fn pending(rid: &str) -> RotationPending {
+        RotationPending {
+            rotation_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            file_id: 5,
+            deadline_ms: 400,
+        }
+    }
+
+    fn commit(rid: &str, reason: RotateReason, generation: u64) -> RotationCommit {
+        RotationCommit {
+            rotation_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            reason,
+            old_file_id: 5,
+            new_file_id: 6,
+            generation,
+            size: 16384,
+        }
+    }
+
+    /// Server side of the local handshake for the new file (id 6).
+    async fn serve_new_local_file(
+        to_client: &UnboundedSender<ServerMessage>,
+        from_client: &mut UnboundedReceiver<ClientMessage>,
+        dir: &std::path::Path,
+        size: usize,
+    ) {
+        let svc = dir.join("new.bin");
+        let non = dir.join("new.nonce");
+        std::fs::write(&svc, vec![0u8; size]).unwrap();
+        std::fs::write(&non, "fresh-nonce").unwrap();
+        let ClientMessage::GetServiceFilePath(g) = from_client.recv().await.unwrap() else {
+            panic!("expected GetServiceFilePath");
+        };
+        to_client
+            .send(ServerMessage::ServiceFilePath(
+                commy_wire::ServiceFilePath {
+                    request_id: g.request_id,
+                    service_id: "svc".to_string(),
+                    file_id: 6,
+                    path: Some(svc.to_string_lossy().into_owned()),
+                    nonce_path: Some(non.to_string_lossy().into_owned()),
+                },
+            ))
+            .unwrap();
+        let ClientMessage::ConfirmLocal(c) = from_client.recv().await.unwrap() else {
+            panic!("expected ConfirmLocal");
+        };
+        assert_eq!(c.file_id, 6);
+        assert_eq!(c.nonce, "fresh-nonce", "a fresh nonce, not the old one");
+        to_client
+            .send(ServerMessage::ConfirmLocalAck(
+                commy_wire::ConfirmLocalAck {
+                    request_id: c.request_id,
+                    file_id: 6,
+                },
+            ))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn resize_drain_flushes_then_drains_then_switches_to_the_new_file() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            dir,
+        } = rig().await;
+        client.shared_write("svc", 100, &[1, 2, 3]).await.unwrap();
+        let p = pending("rot1");
+        let fut = client.drain_for_rotation(&p);
+        let drive = async {
+            // 1. flush into the OLD file
+            let ClientMessage::RangesChanged(r) = from_client.recv().await.unwrap() else {
+                panic!("expected the flush first");
+            };
+            assert_eq!(r.file_id, 5);
+            to_client
+                .send(ServerMessage::FlushAck(FlushAck {
+                    request_id: r.request_id,
+                    file_id: 5,
+                    seq: 9,
+                }))
+                .unwrap();
+            // 2. drained, with the last flushed seq
+            let ClientMessage::RotationDrained(d) = from_client.recv().await.unwrap() else {
+                panic!("expected RotationDrained");
+            };
+            assert_eq!((d.rotation_id.as_str(), d.file_id, d.seq), ("rot1", 5, 9));
+            // 3. commit, then the handshake for the new file
+            to_client
+                .send(ServerMessage::RotationCommit(commit(
+                    "rot1",
+                    RotateReason::Resize,
+                    1,
+                )))
+                .unwrap();
+            serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert_eq!(res.unwrap().new_file_id, 6);
+        let shared = client.shared.read().await;
+        let f = shared.get("svc").unwrap();
+        assert_eq!((f.file_id(), f.generation()), (6, 1));
+        assert!(!f.is_draining());
+        assert!(
+            f.view().iter().all(|b| *b == 0),
+            "old-offset writes must not be replayed after a resize"
+        );
+        assert_eq!(f.view().len(), 16384);
+    }
+
+    #[tokio::test]
+    async fn writes_are_refused_while_draining() {
+        let Rig { client, .. } = rig().await;
+        client
+            .shared
+            .write()
+            .await
+            .get_mut("svc")
+            .unwrap()
+            .set_draining(true);
+        assert!(matches!(
+            client.shared_write("svc", 0, &[1]).await,
+            Err(CommyError::InvalidState(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn drain_sends_drained_then_keeps_waiting_for_the_commit() {
+        let Rig {
+            client,
+            to_client: _keep,
+            mut from_client,
+            ..
+        } = rig().await;
+        let mut p = pending("rot2");
+        p.deadline_ms = 10;
+        // No data to flush, so the drain goes straight to RotationDrained; the commit never comes.
+        // The grace period is 5 s, so shorten the wait by racing a timeout around the call.
+        let res =
+            tokio::time::timeout(Duration::from_millis(300), client.drain_for_rotation(&p)).await;
+        assert!(res.is_err(), "still waiting for the commit");
+        assert!(matches!(
+            from_client.recv().await.unwrap(),
+            ClientMessage::RotationDrained(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn revocation_carries_unflushed_writes_into_the_new_file() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            dir,
+        } = rig().await;
+        client.shared_write("svc", 100, &[7, 7]).await.unwrap();
+        let c = commit("rot3", RotateReason::Revocation, 1);
+        let fut = client.complete_rotation(&c);
+        let drive = async {
+            serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
+            // The carried write is flushed to the NEW file id.
+            let ClientMessage::RangesChanged(r) = from_client.recv().await.unwrap() else {
+                panic!("expected the carried write to be flushed");
+            };
+            assert_eq!(r.file_id, 6);
+            assert_eq!(
+                r.ranges,
+                vec![ByteRange {
+                    offset: 100,
+                    len: 2
+                }]
+            );
+            to_client
+                .send(ServerMessage::FlushAck(FlushAck {
+                    request_id: r.request_id,
+                    file_id: 6,
+                    seq: 1,
+                }))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        res.unwrap();
+        let shared = client.shared.read().await;
+        assert_eq!(&shared.get("svc").unwrap().view()[100..102], &[7, 7]);
+    }
+
+    #[tokio::test]
+    async fn duplicate_commit_is_ignored() {
+        let Rig {
+            client,
+            mut from_client,
+            ..
+        } = rig().await;
+        client
+            .shared
+            .write()
+            .await
+            .get_mut("svc")
+            .unwrap()
+            .set_generation(3);
+        client
+            .complete_rotation(&commit("old", RotateReason::Resize, 3))
+            .await
+            .unwrap();
+        assert!(
+            from_client.try_recv().is_err(),
+            "no handshake for a duplicate"
+        );
+        assert_eq!(client.shared.read().await.get("svc").unwrap().file_id(), 5);
+    }
+
+    #[tokio::test]
+    async fn commit_naming_the_wrong_old_file_is_refused() {
+        let Rig { client, .. } = rig().await;
+        let mut c = commit("r", RotateReason::Resize, 1);
+        c.old_file_id = 99;
+        assert!(matches!(
+            client.complete_rotation(&c).await,
+            Err(CommyError::InvalidState(_))
+        ));
+        assert_eq!(client.shared.read().await.get("svc").unwrap().file_id(), 5);
+    }
+
+    #[tokio::test]
+    async fn loss_revoked_drops_the_mapping_but_resync_overwrote_keeps_it() {
+        let Rig {
+            client, to_client, ..
+        } = rig().await;
+        let loss = |kind| {
+            ServerMessage::Loss(Loss {
+                service_id: "svc".to_string(),
+                file_id: 5,
+                kind,
+                ranges: vec![],
+            })
+        };
+        to_client.send(loss(LossKind::ResyncOverwrote)).unwrap();
+        assert!(matches!(
+            client.poll_shared_events(Duration::from_millis(200)).await,
+            Ok(SharedEvent::Loss(_))
+        ));
+        assert!(client.shared.read().await.contains_key("svc"));
+        to_client.send(loss(LossKind::Revoked)).unwrap();
+        assert!(matches!(
+            client.poll_shared_events(Duration::from_millis(200)).await,
+            Ok(SharedEvent::Loss(_))
+        ));
+        assert!(!client.shared.read().await.contains_key("svc"));
+    }
+
+    #[tokio::test]
+    async fn pending_and_commit_are_reported_as_events() {
+        let Rig {
+            client, to_client, ..
+        } = rig().await;
+        to_client
+            .send(ServerMessage::RotationPending(pending("a")))
+            .unwrap();
+        assert!(matches!(
+            client.poll_shared_events(Duration::from_millis(200)).await,
+            Ok(SharedEvent::RotationPending(_))
+        ));
+        to_client
+            .send(ServerMessage::RotationCommit(commit(
+                "a",
+                RotateReason::Resize,
+                1,
+            )))
+            .unwrap();
+        assert!(matches!(
+            client.poll_shared_events(Duration::from_millis(200)).await,
+            Ok(SharedEvent::RotationCommit(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn request_rotation_validates_then_returns_the_rotation_id() {
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+            ..
+        } = rig().await;
+        // RESIZE without new_size never leaves the client.
+        let bad = client
+            .request_rotation("svc", RotateReason::Resize, None, None)
+            .await;
+        assert!(matches!(bad, Err(CommyError::InvalidRequest(_))), "{bad:?}");
+        assert!(from_client.try_recv().is_err());
+        let fut = client.request_rotation("svc", RotateReason::Resize, Some(16384), None);
+        let drive = async {
+            let ClientMessage::RotateRequest(r) = from_client.recv().await.unwrap() else {
+                panic!("expected RotateRequest");
+            };
+            assert_eq!(r.new_size, Some(16384));
+            to_client
+                .send(ServerMessage::RotationAccepted(RotationAccepted {
+                    request_id: r.request_id,
+                    rotation_id: "rot-9".to_string(),
+                }))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert_eq!(res.unwrap(), "rot-9");
     }
 }
