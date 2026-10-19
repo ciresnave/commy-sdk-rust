@@ -17,6 +17,40 @@ pub enum ConnectionState {
     Closing,
 }
 
+/// The WebSocket frame for an outbound message: range frames are binary, everything else JSON
+/// text. `None` when the message cannot be serialized.
+fn encode_outbound(msg: &ClientMessage) -> Option<Message> {
+    match msg {
+        ClientMessage::Range(frame) => Some(Message::Binary(frame.encode().into())),
+        other => serde_json::to_string(other)
+            .ok()
+            .map(|s| Message::Text(s.into())),
+    }
+}
+
+/// The message carried by an inbound WebSocket frame. A binary frame must be a valid range frame;
+/// a refused one is dropped (never partly applied). Text must be a known `ServerMessage`.
+fn decode_inbound(msg: Message) -> Option<ServerMessage> {
+    match msg {
+        Message::Text(text) => match serde_json::from_str::<ServerMessage>(&text) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                eprintln!("[Client] Failed to deserialize ServerMessage: {}", e);
+                eprintln!("[Client] Raw message: {}", text);
+                None
+            }
+        },
+        Message::Binary(bytes) => match commy_wire::RangeFrame::decode(&bytes) {
+            Ok(frame) => Some(ServerMessage::Range(frame)),
+            Err(e) => {
+                eprintln!("[Client] Refused binary frame: {e:?}");
+                None
+            }
+        },
+        _ => None,
+    }
+}
+
 /// Manages WebSocket connection
 pub struct Connection {
     state: Arc<RwLock<ConnectionState>>,
@@ -38,24 +72,16 @@ impl Connection {
         // Spawn tasks to handle message routing
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
-                if let Ok(serialized) = serde_json::to_string(&msg) {
-                    let _ = write.send(Message::Text(serialized.into())).await;
+                if let Some(frame) = encode_outbound(&msg) {
+                    let _ = write.send(frame).await;
                 }
             }
         });
 
         tokio::spawn(async move {
             while let Some(Ok(msg)) = read.next().await {
-                if let Message::Text(text) = msg {
-                    match serde_json::from_str::<ServerMessage>(&text) {
-                        Ok(server_msg) => {
-                            let _ = server_tx.send(server_msg);
-                        }
-                        Err(e) => {
-                            eprintln!("[Client] Failed to deserialize ServerMessage: {}", e);
-                            eprintln!("[Client] Raw message: {}", text);
-                        }
-                    }
+                if let Some(server_msg) = decode_inbound(msg) {
+                    let _ = server_tx.send(server_msg);
                 }
             }
         });
@@ -229,5 +255,64 @@ mod tests {
             "Closed channel should return Ok(None), got {:?}",
             result
         );
+    }
+}
+
+#[cfg(test)]
+mod codec_tests {
+    use super::*;
+    use commy_wire::RangeFrame;
+
+    fn frame() -> RangeFrame {
+        RangeFrame {
+            file_id: 3,
+            seq: 9,
+            offset: 16,
+            data: vec![1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn range_frames_go_out_as_binary_and_come_back_equal() {
+        let out = encode_outbound(&ClientMessage::Range(frame())).unwrap();
+        let Message::Binary(bytes) = out.clone() else {
+            panic!("range frame must be binary");
+        };
+        assert_eq!(bytes.len(), commy_wire::HEADER_LEN + 3);
+        match decode_inbound(out) {
+            Some(ServerMessage::Range(f)) => assert_eq!(f, frame()),
+            other => panic!("expected Range, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_messages_go_out_as_json_text() {
+        let msg = ClientMessage::FlushEnd(commy_wire::FlushEnd {
+            request_id: "r".to_string(),
+            file_id: 3,
+        });
+        let Some(Message::Text(t)) = encode_outbound(&msg) else {
+            panic!("control message must be text");
+        };
+        assert!(t.contains("\"FlushEnd\""));
+    }
+
+    #[test]
+    fn refused_binary_frames_are_dropped() {
+        // truncated, empty payload (len 0), and unknown kind
+        assert!(decode_inbound(Message::Binary(vec![1u8; 10].into())).is_none());
+        let mut empty = frame().encode();
+        empty.truncate(commy_wire::HEADER_LEN);
+        empty[21..25].copy_from_slice(&0u32.to_le_bytes());
+        assert!(decode_inbound(Message::Binary(empty.into())).is_none());
+        let mut bad_kind = frame().encode();
+        bad_kind[0] = 2;
+        assert!(decode_inbound(Message::Binary(bad_kind.into())).is_none());
+    }
+
+    #[test]
+    fn ping_and_close_are_ignored_and_bad_json_is_dropped() {
+        assert!(decode_inbound(Message::Ping(vec![].into())).is_none());
+        assert!(decode_inbound(Message::Text("not json".into())).is_none());
     }
 }

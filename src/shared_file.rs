@@ -34,9 +34,54 @@ pub enum WriteError {
     OutOfBounds,
 }
 
-/// A local mapping plus the baseline that makes its changes visible.
+/// Where a file's bytes live: a mapping shared with the server (local mode) or a private copy
+/// kept in sync by range frames (remote mode).
+enum Backing {
+    Mapped(LocalMap),
+    Heap(Vec<u8>),
+}
+
+impl Backing {
+    fn view(&self) -> &[u8] {
+        match self {
+            Backing::Mapped(m) => m.view(),
+            Backing::Heap(v) => v,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.view().len()
+    }
+
+    fn write_view(&mut self, offset: u64, bytes: &[u8]) -> bool {
+        match self {
+            Backing::Mapped(m) => m.write_view(offset, bytes),
+            Backing::Heap(v) => write_into(v, offset, bytes),
+        }
+    }
+
+    fn apply_inbound(&mut self, offset: u64, bytes: &[u8]) -> bool {
+        match self {
+            Backing::Mapped(m) => m.apply_inbound(offset, bytes),
+            Backing::Heap(v) => write_into(v, offset, bytes),
+        }
+    }
+}
+
+fn write_into(buf: &mut [u8], offset: u64, bytes: &[u8]) -> bool {
+    let Some(end) = offset.checked_add(bytes.len() as u64) else {
+        return false;
+    };
+    if end > buf.len() as u64 {
+        return false;
+    }
+    buf[offset as usize..end as usize].copy_from_slice(bytes);
+    true
+}
+
+/// A file's bytes plus the baseline that makes its changes visible.
 pub struct SharedFile {
-    map: LocalMap,
+    map: Backing,
     scanner: Scanner,
     file_id: u32,
     seq: u64,
@@ -48,12 +93,30 @@ impl SharedFile {
     pub fn new(map: LocalMap, file_id: u32) -> Self {
         let scanner = Scanner::new(map.view());
         Self {
-            map,
+            map: Backing::Mapped(map),
             scanner,
             file_id,
             seq: 0,
             last_applied: 0,
         }
+    }
+
+    /// Remote mode: track a private copy of the file, as sent by a `Resync`. `seq` is the
+    /// sequence the snapshot is current at.
+    pub fn from_snapshot(bytes: Vec<u8>, file_id: u32, seq: u64) -> Self {
+        let scanner = Scanner::new(&bytes);
+        Self {
+            map: Backing::Heap(bytes),
+            scanner,
+            file_id,
+            seq,
+            last_applied: seq,
+        }
+    }
+
+    /// True when the bytes are a mapping shared with the server (changes travel as ranges only).
+    pub fn is_local(&self) -> bool {
+        matches!(self.map, Backing::Mapped(_))
     }
 
     pub fn file_id(&self) -> u32 {
@@ -97,7 +160,7 @@ impl SharedFile {
             .flat_map(|r| {
                 RangeFrame::split(
                     self.file_id,
-                    self.seq,
+                    self.seq.max(self.last_applied),
                     r.offset as u64,
                     &view[r.offset..r.offset + r.len],
                 )

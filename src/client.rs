@@ -16,6 +16,9 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+/// Largest remote mirror accepted from a `Resync` (guards against a hostile or confused size).
+const MAX_REMOTE_FILE_BYTES: usize = 1 << 30;
+
 /// Main Commy client for interacting with a Commy server
 pub struct Client {
     /// Unique client identifier
@@ -750,12 +753,18 @@ impl Client {
     }
 
     async fn flush_shared_with_timeout(&self, service_id: &str, wait: Duration) -> Result<u64> {
-        let (file_id, batches) = {
+        // Local mode sends ranges only; remote mode sends the changed bytes as range frames
+        // followed by a FlushEnd.
+        let (file_id, batches, frames) = {
             let mut shared = self.shared.write().await;
             let file = shared.get_mut(service_id).ok_or_else(|| {
                 CommyError::NotFound(format!("service {service_id} is not mapped locally"))
             })?;
-            (file.file_id(), file.commit_local())
+            if file.is_local() {
+                (file.file_id(), file.commit_local(), Vec::new())
+            } else {
+                (file.file_id(), Vec::new(), file.commit())
+            }
         };
         let guard = self.connection.read().await;
         let Some(conn) = guard.as_ref() else {
@@ -772,35 +781,139 @@ impl Client {
                 ranges,
             }))
             .await?;
-            let deadline = tokio::time::Instant::now() + wait;
-            let acked = loop {
-                match tokio::time::timeout_at(deadline, conn.recv()).await {
-                    Ok(Ok(Some(ServerMessage::FlushAck(a)))) if a.request_id == request_id => {
-                        break a.seq
-                    }
-                    Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
-                        return Err(CommyError::from(code))
-                    }
-                    Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
-                        if let Some(f) = self.shared.write().await.get_mut(service_id) {
-                            f.on_ranges_updated(&u);
-                        }
-                    }
-                    Ok(Ok(Some(_))) => continue,
-                    Ok(Ok(None)) | Ok(Err(_)) => {
-                        return Err(CommyError::ConnectionLost(
-                            "Connection closed during flush_shared".to_string(),
-                        ))
-                    }
-                    Err(_) => return Err(CommyError::Timeout),
-                }
-            };
-            if let Some(f) = self.shared.write().await.get_mut(service_id) {
-                f.on_flush_ack(acked);
+            seq = seq.max(
+                self.await_flush_ack(conn, service_id, &request_id, wait)
+                    .await?,
+            );
+        }
+        if !frames.is_empty() {
+            for frame in frames {
+                conn.send(ClientMessage::Range(frame)).await?;
             }
-            seq = seq.max(acked);
+            let request_id = Uuid::new_v4().to_string();
+            conn.send(ClientMessage::FlushEnd(commy_wire::FlushEnd {
+                request_id: request_id.clone(),
+                file_id,
+            }))
+            .await?;
+            seq = seq.max(
+                self.await_flush_ack(conn, service_id, &request_id, wait)
+                    .await?,
+            );
         }
         Ok(seq)
+    }
+
+    /// Wait for the `FlushAck` of `request_id`, applying any update that arrives meanwhile.
+    async fn await_flush_ack(
+        &self,
+        conn: &Connection,
+        service_id: &str,
+        request_id: &str,
+        wait: Duration,
+    ) -> Result<u64> {
+        let deadline = tokio::time::Instant::now() + wait;
+        let acked = loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::FlushAck(a)))) if a.request_id == request_id => {
+                    break a.seq
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                    return Err(CommyError::from(code))
+                }
+                Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
+                    if let Some(f) = self.shared.write().await.get_mut(service_id) {
+                        f.on_ranges_updated(&u);
+                    }
+                }
+                Ok(Ok(Some(ServerMessage::Range(frame)))) => {
+                    if let Some(f) = self.shared.write().await.get_mut(service_id) {
+                        let _ = f.apply_inbound(&frame);
+                    }
+                }
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during flush_shared".to_string(),
+                    ))
+                }
+                Err(_) => return Err(CommyError::Timeout),
+            }
+        };
+        if let Some(f) = self.shared.write().await.get_mut(service_id) {
+            f.on_flush_ack(acked);
+        }
+        Ok(acked)
+    }
+
+    /// Remote mode: fetch the whole file with `Resync` and keep a private copy that range frames
+    /// keep current. Use when [`Client::open_shared`] returns `None` (no local mapping offered).
+    /// Returns the file id.
+    pub async fn open_remote(&self, service_id: &str) -> Result<u32> {
+        self.open_remote_with_timeout(service_id, Duration::from_secs(10))
+            .await
+    }
+
+    async fn open_remote_with_timeout(&self, service_id: &str, wait: Duration) -> Result<u32> {
+        // The offer carries the file id; any local mapping offered is dropped.
+        let file_id = self
+            .negotiate_local_with_timeout(service_id, wait)
+            .await?
+            .file_id;
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection lost during open_remote".to_string(),
+            ));
+        };
+        let request_id = Uuid::new_v4().to_string();
+        conn.send(ClientMessage::Resync(commy_wire::Resync {
+            request_id: request_id.clone(),
+            file_id,
+        }))
+        .await?;
+        let deadline = tokio::time::Instant::now() + wait;
+        let mut frames = Vec::new();
+        let done = loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::Range(f)))) if f.file_id == file_id => frames.push(f),
+                Ok(Ok(Some(ServerMessage::ResyncDone(d)))) if d.request_id == request_id => {
+                    break d
+                }
+                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                    return Err(CommyError::from(code))
+                }
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during open_remote".to_string(),
+                    ))
+                }
+                Err(_) => return Err(CommyError::Timeout),
+            }
+        };
+        let size = usize::try_from(done.size)
+            .ok()
+            .filter(|n| *n <= MAX_REMOTE_FILE_BYTES)
+            .ok_or_else(|| {
+                CommyError::InvalidMessage(format!("resync size {} is not acceptable", done.size))
+            })?;
+        let mut bytes = vec![0u8; size];
+        for f in &frames {
+            let end = usize::try_from(f.offset)
+                .ok()
+                .and_then(|o| o.checked_add(f.data.len()).map(|e| (o, e)))
+                .filter(|(_, e)| *e <= size)
+                .ok_or_else(|| {
+                    CommyError::InvalidMessage("resync frame outside the file".to_string())
+                })?;
+            bytes[end.0..end.1].copy_from_slice(&f.data);
+        }
+        self.shared.write().await.insert(
+            service_id.to_string(),
+            SharedFile::from_snapshot(bytes, file_id, done.seq),
+        );
+        Ok(file_id)
     }
 
     /// Wait up to `wait` for one server message and, if it is a `RangesUpdated` for a locally
@@ -821,6 +934,12 @@ impl Client {
                     .map(|f| f.on_ranges_updated(&u))
                     .sum::<usize>()
                     > 0)
+            }
+            Ok(Ok(Some(ServerMessage::Range(frame)))) => {
+                let mut shared = self.shared.write().await;
+                Ok(shared
+                    .values_mut()
+                    .any(|f| f.apply_inbound(&frame) == Ok(crate::shared_file::Applied::Applied)))
             }
             Ok(Ok(Some(_))) => Ok(false),
             Ok(Ok(None)) | Ok(Err(_)) => Err(CommyError::ConnectionLost(
@@ -2325,5 +2444,172 @@ mod shared_tests {
             client.shared_write("svc", 8191, &[1, 2]).await,
             Err(CommyError::InvalidOffset(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use crate::message::{ClientMessage, ServerMessage};
+    use commy_wire::{RangeFrame, ResyncDone};
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+    async fn rig() -> (
+        Client,
+        UnboundedSender<ServerMessage>,
+        UnboundedReceiver<ClientMessage>,
+    ) {
+        let (conn, to_client, from_client) = Connection::new_for_test();
+        let client = Client::new("wss://localhost:9000");
+        client.inject_connection_for_test(conn).await;
+        (client, to_client, from_client)
+    }
+
+    fn offer(rid: &str) -> ServerMessage {
+        ServerMessage::ServiceFilePath(commy_wire::ServiceFilePath {
+            request_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            file_id: 4,
+            path: None,
+            nonce_path: None,
+        })
+    }
+
+    fn frame(offset: u64, data: &[u8]) -> ServerMessage {
+        ServerMessage::Range(RangeFrame {
+            file_id: 4,
+            seq: 6,
+            offset,
+            data: data.to_vec(),
+        })
+    }
+
+    async fn open(
+        client: &Client,
+        to_client: &UnboundedSender<ServerMessage>,
+        from_client: &mut UnboundedReceiver<ClientMessage>,
+    ) -> Result<u32> {
+        let fut = client.open_remote("svc");
+        let drive = async {
+            let ClientMessage::GetServiceFilePath(g) = from_client.recv().await.unwrap() else {
+                panic!("expected GetServiceFilePath");
+            };
+            to_client.send(offer(&g.request_id)).unwrap();
+            let ClientMessage::Resync(r) = from_client.recv().await.unwrap() else {
+                panic!("expected Resync");
+            };
+            assert_eq!(r.file_id, 4);
+            // The snapshot arrives in two frames, then ResyncDone.
+            to_client.send(frame(0, &[1, 2, 3, 4])).unwrap();
+            to_client.send(frame(4, &[5, 6, 7, 8])).unwrap();
+            to_client
+                .send(ServerMessage::ResyncDone(ResyncDone {
+                    request_id: r.request_id,
+                    file_id: 4,
+                    seq: 6,
+                    size: 8,
+                }))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        res
+    }
+
+    #[tokio::test]
+    async fn open_remote_builds_the_mirror_from_the_resync_frames() {
+        let (client, to_client, mut from_client) = rig().await;
+        assert_eq!(
+            open(&client, &to_client, &mut from_client).await.unwrap(),
+            4
+        );
+        let shared = client.shared.read().await;
+        let f = shared.get("svc").unwrap();
+        assert!(!f.is_local());
+        assert_eq!(f.view(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(f.seq(), 6);
+    }
+
+    #[tokio::test]
+    async fn flush_remote_sends_frames_then_flush_end_with_base_seq_and_adopts_ack() {
+        let (client, to_client, mut from_client) = rig().await;
+        open(&client, &to_client, &mut from_client).await.unwrap();
+        client.shared_write("svc", 2, &[9, 9]).await.unwrap();
+        let fut = client.flush_shared("svc");
+        let drive = async {
+            let ClientMessage::Range(f) = from_client.recv().await.unwrap() else {
+                panic!("expected a range frame first");
+            };
+            assert_eq!((f.file_id, f.seq, f.offset), (4, 6, 2));
+            assert_eq!(f.data, vec![9, 9]);
+            let ClientMessage::FlushEnd(e) = from_client.recv().await.unwrap() else {
+                panic!("expected FlushEnd after the frames");
+            };
+            to_client
+                .send(ServerMessage::FlushAck(commy_wire::FlushAck {
+                    request_id: e.request_id,
+                    file_id: 4,
+                    seq: 7,
+                }))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert_eq!(res.unwrap(), 7);
+        assert_eq!(client.flush_shared("svc").await.unwrap(), 0);
+        assert!(from_client.try_recv().is_err(), "nothing left to flush");
+    }
+
+    #[tokio::test]
+    async fn inbound_frame_updates_the_mirror_without_echoing() {
+        let (client, to_client, mut from_client) = rig().await;
+        open(&client, &to_client, &mut from_client).await.unwrap();
+        to_client.send(frame(0, &[42])).unwrap();
+        assert!(client
+            .poll_shared_updates(Duration::from_millis(200))
+            .await
+            .unwrap());
+        assert_eq!(client.shared.read().await.get("svc").unwrap().view()[0], 42);
+        assert_eq!(client.flush_shared("svc").await.unwrap(), 0);
+        assert!(from_client.try_recv().is_err(), "inbound bytes echoed back");
+    }
+
+    #[tokio::test]
+    async fn resync_frame_outside_the_file_is_rejected() {
+        let (client, to_client, mut from_client) = rig().await;
+        let fut = client.open_remote("svc");
+        let drive = async {
+            let ClientMessage::GetServiceFilePath(g) = from_client.recv().await.unwrap() else {
+                panic!("expected GetServiceFilePath");
+            };
+            to_client.send(offer(&g.request_id)).unwrap();
+            let ClientMessage::Resync(r) = from_client.recv().await.unwrap() else {
+                panic!("expected Resync");
+            };
+            to_client.send(frame(6, &[1, 2, 3, 4])).unwrap();
+            to_client
+                .send(ServerMessage::ResyncDone(ResyncDone {
+                    request_id: r.request_id,
+                    file_id: 4,
+                    seq: 1,
+                    size: 8,
+                }))
+                .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::InvalidMessage(_))), "{res:?}");
+        assert!(client.shared.read().await.get("svc").is_none());
+    }
+
+    #[tokio::test]
+    async fn resync_without_done_times_out() {
+        let (client, to_client, mut from_client) = rig().await;
+        let fut = client.open_remote_with_timeout("svc", Duration::from_millis(150));
+        let drive = async {
+            let ClientMessage::GetServiceFilePath(g) = from_client.recv().await.unwrap() else {
+                panic!("expected GetServiceFilePath");
+            };
+            to_client.send(offer(&g.request_id)).unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::Timeout)), "{res:?}");
     }
 }

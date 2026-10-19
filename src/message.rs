@@ -88,6 +88,16 @@ pub enum ClientMessage {
     /// Ask whether a service file may be mapped locally (commy-wire local mapping handshake)
     GetServiceFilePath(commy_wire::GetServiceFilePath),
 
+    /// Remote sender: the bytes of one range frame (a WebSocket binary message, never JSON)
+    #[serde(skip)]
+    Range(commy_wire::RangeFrame),
+
+    /// Remote sender: the frames for one flush are complete
+    FlushEnd(commy_wire::FlushEnd),
+
+    /// Ask for the whole file as range frames followed by `ResyncDone`
+    Resync(commy_wire::Resync),
+
     /// Local sender: these ranges of the shared mapping changed (no data travels)
     RangesChanged(commy_wire::RangesChanged),
 
@@ -168,6 +178,13 @@ pub enum ServerMessage {
 
     /// The file id for range frames, and (when offered) the local path and nonce path
     ServiceFilePath(commy_wire::ServiceFilePath),
+
+    /// Remote receiver: the bytes of one range frame (a WebSocket binary message)
+    #[serde(skip)]
+    Range(commy_wire::RangeFrame),
+
+    /// The whole file has been sent as range frames; it is current at `seq`
+    ResyncDone(commy_wire::ResyncDone),
 
     /// The server accepted a flush and assigned it this sequence number
     FlushAck(commy_wire::FlushAck),
