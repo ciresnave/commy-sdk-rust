@@ -64,7 +64,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
-      - run: cargo build --manifest-path commy/Cargo.toml --bin commy
+      # commy pins nightly in its own rust-toolchain.toml; rustup picks the toolchain from the working
+      # directory, not from --manifest-path, so build from inside its checkout.
+      - run: rustup toolchain install nightly --profile minimal
+      # `--features libc`: commy 0.7.1 uses libc on unix without enabling the optional dependency (reported).
+      - run: cargo build --bin commy --features libc
+        working-directory: commy
       - run: cargo test --features e2e --test e2e -- --test-threads=1
         env:
           COMMY_BIN: ${{ github.workspace }}/commy/target/debug/commy
