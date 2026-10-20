@@ -10,6 +10,12 @@ pub enum ClientMessage {
     Authenticate {
         tenant_id: String,
         client_version: String,
+        /// The identity grants are filed under (1 to 128 characters of letters, digits and `_-.@:`)
+        client_id: String,
+        /// Development servers only: ask for exactly these scopes (`[]` for none) instead of
+        /// administrator. A production server ignores or refuses it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dev_scopes: Option<Vec<String>>,
         #[serde(flatten)]
         credentials: AuthCredentials,
     },
@@ -144,6 +150,9 @@ pub enum ServerMessage {
         success: bool,
         message: String,
         server_version: String,
+        /// The identity the server filed this session under (grants name it)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         permissions: Option<Vec<String>>,
     },
@@ -469,6 +478,8 @@ mod tests {
         let msg = ClientMessage::Authenticate {
             tenant_id: "tenant1".to_string(),
             client_version: "0.1.0".to_string(),
+            client_id: "c1".to_string(),
+            dev_scopes: None,
             credentials: AuthCredentials::ApiKey {
                 key: "secret".into(),
             },
@@ -494,6 +505,7 @@ mod tests {
             success: true,
             message: "OK".to_string(),
             server_version: "0.1.0".to_string(),
+            client_id: None,
             permissions: Some(vec!["read".to_string()]),
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -575,6 +587,8 @@ mod tests {
             let msg = ClientMessage::Authenticate {
                 tenant_id: "t".into(),
                 client_version: "v".into(),
+                client_id: "c".into(),
+                dev_scopes: None,
                 credentials: creds.clone(),
             };
             for shown in [
