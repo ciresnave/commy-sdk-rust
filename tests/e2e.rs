@@ -14,9 +14,37 @@ use std::time::Duration;
 
 struct Server {
     child: Child,
+    bin: String,
+    port: u16,
     _dir: tempfile::TempDir,
     url: String,
     cert_pem: String,
+}
+
+/// Start the server binary in `dir` (its working directory, so its `commy_state` and tenant
+/// directories live there) on `port`, appending to the same logs.
+fn spawn_server(bin: &str, dir: &std::path::Path, port: u16) -> Child {
+    let log = |n: &str| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(n))
+            .unwrap()
+    };
+    Command::new(bin)
+        .current_dir(dir)
+        .env("COMMY_LISTEN_ADDR", "127.0.0.1")
+        .env("COMMY_LISTEN_PORT", port.to_string())
+        .env("COMMY_TLS_CERT_PATH", dir.join("cert.pem"))
+        .env("COMMY_TLS_KEY_PATH", dir.join("key.pem"))
+        .env("COMMY_ALLOW_DEV_AUTH", "1")
+        // Anything not starting with postgresql:// or mysql:// selects in-memory auth storage.
+        .env("DATABASE_URL", "memory")
+        .stdout(log("out.log"))
+        .stderr(log("err.log"))
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("start the commy server")
 }
 
 impl Drop for Server {
@@ -42,38 +70,41 @@ impl Server {
             .local_addr()
             .unwrap()
             .port();
-        let child = Command::new(bin)
-            .current_dir(dir.path())
-            .env("COMMY_LISTEN_ADDR", "127.0.0.1")
-            .env("COMMY_LISTEN_PORT", port.to_string())
-            .env("COMMY_TLS_CERT_PATH", dir.path().join("cert.pem"))
-            .env("COMMY_TLS_KEY_PATH", dir.path().join("key.pem"))
-            .env("COMMY_ALLOW_DEV_AUTH", "1")
-            // Anything not starting with postgresql:// or mysql:// selects in-memory auth storage.
-            .env("DATABASE_URL", "memory")
-            .stdout(std::fs::File::create(dir.path().join("out.log")).unwrap())
-            .stderr(std::fs::File::create(dir.path().join("err.log")).unwrap())
-            .stdin(Stdio::null())
-            .spawn()
-            .expect("start the commy server");
+        let child = spawn_server(&bin, dir.path(), port);
         let mut server = Server {
             child,
+            bin,
+            port,
             _dir: dir,
             url: format!("wss://127.0.0.1:{port}"),
             cert_pem,
         };
-        // Ready when a client can connect.
+        server.wait_ready().await;
+        server
+    }
+
+    /// Ready when a client can connect.
+    async fn wait_ready(&mut self) {
         for _ in 0..100 {
-            if let Some(status) = server.child.try_wait().unwrap() {
-                panic!("server exited early ({status}): {}", server.logs());
+            if let Some(status) = self.child.try_wait().unwrap() {
+                panic!("server exited early ({status}): {}", self.logs());
             }
-            let probe = server.client();
+            let probe = self.client();
             if probe.connect().await.is_ok() {
-                return server;
+                return;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        panic!("server never accepted a connection: {}", server.logs());
+        panic!("server never accepted a connection: {}", self.logs());
+    }
+
+    /// Kill the server and start it again on the same port and state directory. Sessions, nonces and
+    /// rotations in flight are gone; the service registry and the grants are what must survive.
+    async fn restart(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.child = spawn_server(&self.bin, self._dir.path(), self.port);
+        self.wait_ready().await;
     }
 
     fn logs(&self) -> String {
@@ -489,4 +520,77 @@ async fn local_mode_resize_is_filled_through_the_prepared_file() {
     b.flush_shared(&svc).await.unwrap();
     assert!(a.poll_shared_updates(WAIT).await.unwrap());
     assert_eq!(a.shared_read(&svc, 12000, 5).await.unwrap(), b"after");
+}
+
+#[tokio::test]
+async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
+    use commy_sdk_rust::CommyError;
+    let mut s = Server::start().await;
+    let admin = s.session("t_restart").await;
+    let svc = admin
+        .create_service("t_restart", "svc", 4096)
+        .await
+        .unwrap();
+    admin
+        .grant(
+            "bob-restart",
+            Some(&svc),
+            &["service:read", "service:write"],
+        )
+        .await
+        .unwrap();
+    let bob_client = |s: &Server| {
+        Client::with_id(s.url.clone(), "bob-restart")
+            .with_tls_root_pem(s.cert_pem.clone())
+            .with_dev_scopes(&[])
+    };
+    let bob = bob_client(&s);
+    bob.connect().await.unwrap();
+    bob.authenticate("t_restart", auth::api_key("x".to_string()))
+        .await
+        .unwrap();
+    bob.open_remote(&svc).await.expect("allowed by the grant");
+    drop((admin, bob));
+
+    s.restart().await;
+
+    // The same service id, and bob's grant is still there with no administrator acting.
+    let admin = s.session("t_restart").await;
+    assert_eq!(
+        admin.get_service("t_restart", "svc").await.unwrap().id,
+        svc,
+        "the registry is durable"
+    );
+    let entries = admin.list_grants(Some("bob-restart"), None).await.unwrap();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    let bob = bob_client(&s);
+    bob.connect().await.unwrap();
+    bob.authenticate("t_restart", auth::api_key("x".to_string()))
+        .await
+        .unwrap();
+    bob.open_remote(&svc)
+        .await
+        .expect("the grant survived the restart");
+
+    // A revoke is durable too: a restart must not give the access back.
+    admin
+        .revoke(
+            "bob-restart",
+            Some(&svc),
+            &["service:read", "service:write"],
+        )
+        .await
+        .unwrap();
+    drop((admin, bob));
+    s.restart().await;
+    let bob = bob_client(&s);
+    bob.connect().await.unwrap();
+    bob.authenticate("t_restart", auth::api_key("x".to_string()))
+        .await
+        .unwrap();
+    let denied = bob.open_remote(&svc).await.unwrap_err();
+    assert!(
+        matches!(denied, CommyError::PermissionDenied(_)),
+        "a revoked grant must stay revoked: {denied:?}"
+    );
 }
