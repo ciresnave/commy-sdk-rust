@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.11.2"
+version = "0.11.3"
 authors = ["Commy Contributors"]
 build = false
 autolib = false
@@ -55,6 +55,10 @@ path = "examples/permissions_example.rs"
 [[test]]
 name = "crud_integration_tests"
 path = "tests/crud_integration_tests.rs"
+
+[[test]]
+name = "wire_vectors"
+path = "tests/wire_vectors.rs"
 
 [[test]]
 name = "server_behavior_tests"
