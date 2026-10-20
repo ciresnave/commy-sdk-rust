@@ -206,7 +206,14 @@ pub enum ServerMessage {
     },
 
     /// Error response with explicit error type
-    Error { code: ErrorCode, message: String },
+    Error {
+        code: ErrorCode,
+        message: String,
+        /// The request this answers, when the server names one (every commy-wire request does).
+        /// A waiting call ignores an error that names another request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
 
     /// Server disconnecting
     Disconnected { reason: String },
@@ -287,6 +294,16 @@ pub enum ErrorCode {
     ConnectionLost,
     /// Operation timed out
     Timeout,
+    /// The request needs authentication first (commy-wire `UNAUTHENTICATED`)
+    Unauthenticated,
+    /// Too many requests (commy-wire `RATE_LIMITED`)
+    RateLimited,
+    /// The protocol version is not supported (commy-wire `UNSUPPORTED_VERSION`)
+    UnsupportedVersion,
+    /// A code this version does not know: the error still reaches the caller instead of the
+    /// whole message being dropped.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A value that must never appear in logs, panics or `{:?}` output.
@@ -415,6 +432,18 @@ impl From<ErrorCode> for crate::error::CommyError {
             ErrorCode::ConnectionLost => {
                 crate::error::CommyError::ConnectionLost("Connection lost".to_string())
             }
+            ErrorCode::Unauthenticated => {
+                crate::error::CommyError::Unauthorized("Not authenticated".to_string())
+            }
+            ErrorCode::RateLimited => {
+                crate::error::CommyError::Other("Rate limited by the server".to_string())
+            }
+            ErrorCode::UnsupportedVersion => {
+                crate::error::CommyError::Other("Unsupported protocol version".to_string())
+            }
+            ErrorCode::Unknown => {
+                crate::error::CommyError::Other("Unknown server error".to_string())
+            }
             ErrorCode::Timeout => crate::error::CommyError::Timeout,
         }
     }
@@ -527,6 +556,7 @@ mod tests {
         let msg = ServerMessage::Error {
             code: ErrorCode::NotFound,
             message: "Not found".to_string(),
+            request_id: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
@@ -1079,5 +1109,30 @@ mod tests {
             result.is_err(),
             "Deserializing unknown 'type' tag must fail, not silently produce a wrong variant"
         );
+    }
+
+    #[test]
+    fn every_commy_wire_error_code_deserializes_and_unknown_ones_do_not_drop_the_message() {
+        for code in commy_wire::ErrorCode::ALL {
+            let json = format!(
+                r#"{{"type":"Error","data":{{"code":"{}","message":"m","request_id":"r1"}}}}"#,
+                code.as_str()
+            );
+            let m: ServerMessage = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("{} must deserialize: {e}", code.as_str()));
+            assert!(
+                matches!(&m, ServerMessage::Error { request_id: Some(r), .. } if r == "r1"),
+                "{m:?}"
+            );
+        }
+        let newer = r#"{"type":"Error","data":{"code":"SOMETHING_NEW","message":"m"}}"#;
+        assert!(matches!(
+            serde_json::from_str::<ServerMessage>(newer).unwrap(),
+            ServerMessage::Error {
+                code: ErrorCode::Unknown,
+                request_id: None,
+                ..
+            }
+        ));
     }
 }

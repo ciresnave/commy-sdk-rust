@@ -773,7 +773,11 @@ impl Client {
                 Ok(Ok(Some(ServerMessage::ServiceFilePath(o)))) if o.request_id == request_id => {
                     break o
                 }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                Ok(Ok(Some(ServerMessage::Error {
+                    code,
+                    request_id: erid,
+                    ..
+                }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
                 Ok(Ok(Some(_))) => continue,
@@ -818,7 +822,10 @@ impl Client {
                     })
                 }
                 // A refusal (wrong nonce, rate limit) or silence: stay on WSS ranges.
-                Ok(Ok(Some(ServerMessage::Error { .. }))) | Err(_) => return Ok(stay_on_wss),
+                Ok(Ok(Some(ServerMessage::Error {
+                    request_id: erid, ..
+                }))) if erid.as_deref().is_none_or(|e| e == confirm_id) => return Ok(stay_on_wss),
+                Err(_) => return Ok(stay_on_wss),
                 Ok(Ok(Some(_))) => continue,
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
@@ -965,7 +972,11 @@ impl Client {
                 Ok(Ok(Some(ServerMessage::FlushAck(a)))) if a.request_id == request_id => {
                     break a.seq
                 }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                Ok(Ok(Some(ServerMessage::Error {
+                    code,
+                    request_id: erid,
+                    ..
+                }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
                 Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
@@ -1027,7 +1038,11 @@ impl Client {
                 Ok(Ok(Some(ServerMessage::ResyncDone(d)))) if d.request_id == request_id => {
                     break d
                 }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                Ok(Ok(Some(ServerMessage::Error {
+                    code,
+                    request_id: erid,
+                    ..
+                }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
                 Ok(Ok(Some(_))) => continue,
@@ -1239,7 +1254,11 @@ impl Client {
                 Ok(Ok(Some(reply @ ServerMessage::LocalMappingAck(_)))) if matches!(&reply, ServerMessage::LocalMappingAck(a) if a.request_id == request_id) => {
                     return Ok(reply)
                 }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                Ok(Ok(Some(ServerMessage::Error {
+                    code,
+                    request_id: erid,
+                    ..
+                }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
                 Ok(Ok(Some(_))) => continue,
@@ -1286,7 +1305,11 @@ impl Client {
                 Ok(Ok(Some(ServerMessage::RotationAccepted(a)))) if a.request_id == request_id => {
                     return Ok(a.rotation_id)
                 }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
+                Ok(Ok(Some(ServerMessage::Error {
+                    code,
+                    request_id: erid,
+                    ..
+                }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
                 Ok(Ok(Some(_))) => continue,
@@ -2074,6 +2097,7 @@ mod tests {
         let err_response = crate::message::ServerMessage::Error {
             code: crate::message::ErrorCode::NotFound,
             message: "service creation failed: not found".to_string(),
+            request_id: None,
         };
         let (client, _client_rx) = setup_client_with_mock_response("tenant_a", err_response).await;
         let result = client
@@ -2098,6 +2122,7 @@ mod tests {
         let err_response = crate::message::ServerMessage::Error {
             code: crate::message::ErrorCode::PermissionDenied,
             message: "insufficient permissions".to_string(),
+            request_id: None,
         };
         let (client, _client_rx) = setup_client_with_mock_response("tenant_b", err_response).await;
         let result = client.get_service("tenant_b", "svc").await;
@@ -2118,6 +2143,7 @@ mod tests {
         let err_response = crate::message::ServerMessage::Error {
             code: crate::message::ErrorCode::AlreadyExists,
             message: "unexpected".to_string(),
+            request_id: None,
         };
         let (client, _client_rx) = setup_client_with_mock_response("tenant_c", err_response).await;
         let result = client.delete_service("tenant_c", "svc").await;
@@ -2182,6 +2208,7 @@ mod tests {
             .send(crate::message::ServerMessage::Error {
                 code: crate::message::ErrorCode::Unauthorized,
                 message: "bad token".to_string(),
+                request_id: None,
             })
             .expect("pre-send failed");
         client.inject_connection_for_test(conn).await;
@@ -2385,6 +2412,7 @@ mod tests {
             crate::message::ServerMessage::Error {
                 code: crate::message::ErrorCode::Unauthorized,
                 message: "invalid credentials".to_string(),
+                request_id: None,
             },
         )
         .await;
@@ -2425,6 +2453,7 @@ mod tests {
             crate::message::ServerMessage::Error {
                 code: crate::message::ErrorCode::NotFound,
                 message: "tenant does not exist".to_string(),
+                request_id: None,
             },
         )
         .await;
@@ -2444,6 +2473,7 @@ mod tests {
             crate::message::ServerMessage::Error {
                 code: crate::message::ErrorCode::NotFound,
                 message: "variable does not exist".to_string(),
+                request_id: None,
             },
         )
         .await;
@@ -2911,6 +2941,7 @@ mod negotiate_tests {
                 .send(ServerMessage::Error {
                     code: crate::message::ErrorCode::PermissionDenied,
                     message: "bad nonce".to_string(),
+                    request_id: None,
                 })
                 .unwrap();
         };
@@ -2991,6 +3022,7 @@ mod negotiate_tests {
                 .send(ServerMessage::Error {
                     code: crate::message::ErrorCode::NotFound,
                     message: "no such service".to_string(),
+                    request_id: None,
                 })
                 .unwrap();
         };
@@ -4087,11 +4119,59 @@ mod grant_tests {
         to.send(ServerMessage::Error {
             code: crate::message::ErrorCode::PermissionDenied,
             message: "not an admin".into(),
+            request_id: None,
         })
         .unwrap();
         assert!(matches!(
             c.set_local_mapping("svc", true).await,
             Err(CommyError::PermissionDenied(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_error_naming_another_request_is_not_this_requests_reply() {
+        let (c, to, mut from) = client().await;
+        let fut = c.grant("bob", None, &["tenant:read"]);
+        let drive = async {
+            let ClientMessage::Grant(g) = from.recv().await.unwrap() else {
+                panic!("expected Grant");
+            };
+            // Someone else's refusal arrives first; it must not become this grant's result.
+            to.send(ServerMessage::Error {
+                code: crate::message::ErrorCode::PermissionDenied,
+                message: "not yours".into(),
+                request_id: Some("another-request".into()),
+            })
+            .unwrap();
+            to.send(ServerMessage::GrantAck(commy_wire::GrantAck {
+                request_id: g.request_id,
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        res.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_error_naming_this_request_and_new_wire_codes_reach_the_caller() {
+        let (c, to, mut from) = client().await;
+        let fut = c.grant("bob", None, &["tenant:read"]);
+        let drive = async {
+            let ClientMessage::Grant(g) = from.recv().await.unwrap() else {
+                panic!("expected Grant");
+            };
+            to.send(ServerMessage::Error {
+                code: crate::message::ErrorCode::RateLimited,
+                message: "slow down".into(),
+                request_id: Some(g.request_id),
+            })
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::Other(m)) if m.contains("Rate limited")));
+        assert!(matches!(
+            CommyError::from(crate::message::ErrorCode::Unauthenticated),
+            CommyError::Unauthorized(_)
         ));
     }
 
@@ -4110,6 +4190,7 @@ mod grant_tests {
         to.send(ServerMessage::Error {
             code: crate::message::ErrorCode::PermissionDenied,
             message: "no".into(),
+            request_id: None,
         })
         .unwrap();
         assert!(matches!(
