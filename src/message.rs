@@ -137,11 +137,8 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
-    /// The answer to `Authenticate`. A server older than commy-wire 0.4.0 sends no `request_id`;
-    /// that reads as an empty one, which the waiting call accepts (see `legacy_auth_result`).
-    AuthenticationResult(
-        #[serde(deserialize_with = "legacy_auth_result")] commy_wire::AuthenticationResult,
-    ),
+    /// The answer to `Authenticate`; it names the request it answers.
+    AuthenticationResult(commy_wire::AuthenticationResult),
 
     /// Service created or retrieved
     Service {
@@ -402,22 +399,6 @@ pub enum Permission {
     Execute,
 }
 
-/// Read an `AuthenticationResult`, filling in an empty `request_id` when an older server omits it.
-/// Remove with the servers that speak commy-wire 0.3.x.
-fn legacy_auth_result<'de, D>(
-    d: D,
-) -> std::result::Result<commy_wire::AuthenticationResult, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    let mut v = serde_json::Value::deserialize(d)?;
-    if let Some(o) = v.as_object_mut() {
-        o.entry("request_id").or_insert_with(|| "".into());
-    }
-    serde_json::from_value(v).map_err(D::Error::custom)
-}
-
 impl From<&AuthCredentials> for commy_wire::Credentials {
     /// The wire form of the credentials. The secrets are exposed here, on their way to the server.
     fn from(c: &AuthCredentials) -> Self {
@@ -589,12 +570,10 @@ mod tests {
     }
 
     #[test]
-    fn an_authentication_result_without_request_id_from_an_older_server_still_reads() {
-        let legacy = r#"{"type":"AuthenticationResult","data":{"success":true,"message":"ok","server_version":"0.13.0","client_id":"c","permissions":["all"]}}"#;
-        let m: ServerMessage = serde_json::from_str(legacy).unwrap();
-        assert!(
-            matches!(m, ServerMessage::AuthenticationResult(r) if r.request_id.is_empty() && r.success)
-        );
+    fn an_authentication_result_without_request_id_is_refused() {
+        // commy-wire 0.4.0 requires the request id; servers older than that are no longer supported.
+        let legacy = r#"{"type":"AuthenticationResult","data":{"success":true,"message":"ok","server_version":"0.13.0"}}"#;
+        assert!(serde_json::from_str::<ServerMessage>(legacy).is_err());
     }
 
     #[test]
