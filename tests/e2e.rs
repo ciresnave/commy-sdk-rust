@@ -376,3 +376,117 @@ async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revoca
         "{again:?}"
     );
 }
+
+/// A tenant whose service `svc` is open to local mapping, and two admin sessions on it.
+async fn local_rig(s: &Server, tenant: &str) -> (Arc<Client>, Arc<Client>, String) {
+    let a = Arc::new(s.session(tenant).await);
+    let b = Arc::new(s.session(tenant).await);
+    let svc = a.create_service(tenant, "svc", 8192).await.unwrap();
+    assert_eq!(
+        a.open_shared(&svc).await.unwrap(),
+        None,
+        "local mapping is closed until an administrator opens it"
+    );
+    assert!(a.set_local_mapping(&svc, true).await.unwrap());
+    (a, b, svc)
+}
+
+#[tokio::test]
+async fn local_mode_shares_one_mapping_between_clients_and_with_remote_ones() {
+    let s = Server::start().await;
+    let (a, b, svc) = local_rig(&s, "t_local").await;
+    let fa = a.open_shared(&svc).await.unwrap().expect("local mapping");
+    let fb = b.open_shared(&svc).await.unwrap().expect("local mapping");
+    assert_eq!(fa, fb);
+    let r = Arc::new(s.session("t_local").await);
+    r.open_remote(&svc).await.unwrap();
+
+    a.shared_write(&svc, 10, b"local").await.unwrap();
+    a.flush_shared(&svc).await.unwrap();
+    assert!(b.poll_shared_updates(WAIT).await.unwrap(), "B must hear A");
+    assert_eq!(b.shared_read(&svc, 10, 5).await.unwrap(), b"local");
+    assert!(r.poll_shared_updates(WAIT).await.unwrap(), "R must hear A");
+    assert_eq!(r.shared_read(&svc, 10, 5).await.unwrap(), b"local");
+
+    // The remote writer's bytes land in the mapping both local clients share.
+    r.shared_write(&svc, 100, b"remote").await.unwrap();
+    r.flush_shared(&svc).await.unwrap();
+    assert!(a.poll_shared_updates(WAIT).await.unwrap());
+    assert_eq!(a.shared_read(&svc, 100, 6).await.unwrap(), b"remote");
+    assert_eq!(b.shared_read(&svc, 100, 6).await.unwrap(), b"remote");
+
+    // Closing the mapping stops future offers.
+    assert!(!a.set_local_mapping(&svc, false).await.unwrap());
+    let late = s.session("t_local").await;
+    assert_eq!(late.open_shared(&svc).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn local_mode_with_the_write_trap_reports_trapped_writes() {
+    let s = Server::start().await;
+    let (a, b, svc) = local_rig(&s, "t_trap").await;
+    a.open_shared(&svc).await.unwrap().expect("local mapping");
+    b.open_shared(&svc).await.unwrap().expect("local mapping");
+    // SAFETY: only this test thread writes the mapping, through `shared_write`.
+    unsafe { a.arm_shared_trap(&svc, 64) }.await.unwrap();
+
+    a.shared_write(&svc, 5000, b"trapped").await.unwrap();
+    a.flush_shared(&svc).await.unwrap();
+    assert!(b.poll_shared_updates(WAIT).await.unwrap());
+    assert_eq!(b.shared_read(&svc, 5000, 7).await.unwrap(), b"trapped");
+
+    // A write by B reaches A, which must not echo it back as its own change.
+    b.shared_write(&svc, 6000, b"from b").await.unwrap();
+    b.flush_shared(&svc).await.unwrap();
+    assert!(a.poll_shared_updates(WAIT).await.unwrap());
+    assert_eq!(a.shared_read(&svc, 6000, 6).await.unwrap(), b"from b");
+    a.flush_shared(&svc).await.unwrap();
+    assert!(matches!(
+        b.poll_shared_events(Duration::from_millis(500))
+            .await
+            .unwrap(),
+        SharedEvent::None
+    ));
+}
+
+#[tokio::test]
+async fn local_mode_resize_is_filled_through_the_prepared_file() {
+    let s = Server::start().await;
+    let (a, b, svc) = local_rig(&s, "t_lresize").await;
+    a.open_shared(&svc).await.unwrap().expect("local mapping");
+    b.open_shared(&svc).await.unwrap().expect("local mapping");
+    a.shared_write(&svc, 10, b"old layout").await.unwrap();
+    a.flush_shared(&svc).await.unwrap();
+    assert!(b.poll_shared_updates(WAIT).await.unwrap());
+    a.request_rotation(&svc, RotateReason::Resize, Some(16384), None)
+        .await
+        .unwrap();
+
+    let requester = async {
+        let p = next_pending(&a).await;
+        let RotationOutcome::Prepared(r) = a.drain_for_rotation(&p).await.unwrap() else {
+            panic!("the requester must be asked to fill");
+        };
+        assert!(r.path.is_some(), "a local requester gets the file path");
+        let mut fill = a.begin_fill(&p, &r).unwrap();
+        let old = a.shared_read(&svc, 10, 10).await.unwrap();
+        fill.write(4096, &old).unwrap();
+        a.finish_fill(fill).await.unwrap()
+    };
+    let member = async {
+        let p = next_pending(&b).await;
+        b.drain_for_rotation(&p).await.unwrap()
+    };
+    let (ra, rb) = tokio::join!(requester, member);
+    assert!(matches!(ra, RotationOutcome::Committed(_)));
+    assert!(matches!(rb, RotationOutcome::Committed(_)));
+    for c in [&a, &b] {
+        assert_eq!(c.shared_read(&svc, 4096, 10).await.unwrap(), b"old layout");
+        assert!(c.shared_read(&svc, 16380, 4).await.is_ok(), "new size");
+    }
+    // Both are still on local mappings of the NEW file.
+    b.shared_write(&svc, 12000, b"after").await.unwrap();
+    b.flush_shared(&svc).await.unwrap();
+    assert!(a.poll_shared_updates(WAIT).await.unwrap());
+    assert_eq!(a.shared_read(&svc, 12000, 5).await.unwrap(), b"after");
+}

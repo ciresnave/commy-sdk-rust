@@ -738,14 +738,18 @@ impl Client {
     ///
     /// While waiting, messages that do not carry this call's `request_id` are discarded.
     pub async fn negotiate_local(&self, service_id: &str) -> Result<NegotiatedFile> {
-        self.negotiate_local_with_timeout(service_id, Duration::from_secs(10))
+        self.negotiate_local_with_timeout(service_id, Duration::from_secs(10), true)
             .await
     }
 
+    /// `confirm`: take up a local mapping if one is offered. A caller that only wants the file id
+    /// (a remote mirror) passes `false`: confirming would make the server treat it as a local
+    /// mapper, which sends `RangesChanged` and has its range frames refused.
     async fn negotiate_local_with_timeout(
         &self,
         service_id: &str,
         wait: Duration,
+        confirm: bool,
     ) -> Result<NegotiatedFile> {
         let guard = self.connection.read().await;
         let Some(conn) = guard.as_ref() else {
@@ -786,6 +790,9 @@ impl Client {
             file_id: offer.file_id,
             local: None,
         };
+        if !confirm {
+            return Ok(stay_on_wss);
+        }
         let map = match LocalMap::from_offer(
             offer.path.as_deref().map(std::path::Path::new),
             offer.nonce_path.as_deref().map(std::path::Path::new),
@@ -995,9 +1002,9 @@ impl Client {
     }
 
     async fn open_remote_with_timeout(&self, service_id: &str, wait: Duration) -> Result<u32> {
-        // The offer carries the file id; any local mapping offered is dropped.
+        // The offer carries the file id; a local mapping offered is neither opened nor confirmed.
         let file_id = self
-            .negotiate_local_with_timeout(service_id, wait)
+            .negotiate_local_with_timeout(service_id, wait, false)
             .await?
             .file_id;
         let guard = self.connection.read().await;
@@ -2828,6 +2835,30 @@ mod negotiate_tests {
     }
 
     #[tokio::test]
+    async fn open_remote_never_confirms_a_local_mapping_it_was_offered() {
+        // Confirming would make the server treat this client as a local mapper and refuse its range
+        // frames, so a remote mirror must go straight to Resync.
+        let d = tempfile::tempdir().unwrap();
+        let (svc, non) = files(d.path());
+        let Rig {
+            client,
+            to_client,
+            mut from_client,
+        } = rig().await;
+        let fut = client.open_remote_with_timeout("svc", Duration::from_millis(300));
+        let drive = async {
+            let rid = first_request_id(&mut from_client).await;
+            to_client.send(offer(&rid, Some(&svc), Some(&non))).unwrap();
+            assert!(
+                matches!(from_client.recv().await.unwrap(), ClientMessage::Resync(_)),
+                "open_remote must not send ConfirmLocal"
+            );
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(res.is_err(), "no ResyncDone was served");
+    }
+
+    #[tokio::test]
     async fn offer_with_matching_nonce_and_ack_enters_local_mode() {
         let d = tempfile::tempdir().unwrap();
         let (svc, non) = files(d.path());
@@ -2937,7 +2968,7 @@ mod negotiate_tests {
             to_client,
             mut from_client,
         } = rig().await;
-        let fut = client.negotiate_local_with_timeout("svc", Duration::from_millis(200));
+        let fut = client.negotiate_local_with_timeout("svc", Duration::from_millis(200), true);
         let drive = async {
             let _rid = first_request_id(&mut from_client).await;
             to_client.send(offer("someone-else", None, None)).unwrap();
