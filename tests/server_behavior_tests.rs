@@ -31,6 +31,7 @@ fn test_server_response_format_error_not_found() {
     let response = ServerMessage::Error {
         code: ErrorCode::NotFound,
         message: "Service 'config' not found".to_string(),
+        request_id: None,
     };
 
     let json = serde_json::to_string(&response).expect("Should serialize");
@@ -48,6 +49,7 @@ fn test_server_response_format_error_permission_denied() {
     let response = ServerMessage::Error {
         code: ErrorCode::PermissionDenied,
         message: "Permission denied: create_service required".to_string(),
+        request_id: None,
     };
 
     let json = serde_json::to_string(&response).expect("Should serialize");
@@ -68,6 +70,7 @@ fn test_server_response_format_error_unauthorized() {
     let response = ServerMessage::Error {
         code: ErrorCode::Unauthorized,
         message: "Not authenticated to this tenant".to_string(),
+        request_id: None,
     };
 
     let json = serde_json::to_string(&response).expect("Should serialize");
@@ -88,6 +91,7 @@ fn test_server_response_format_error_already_exists() {
     let response = ServerMessage::Error {
         code: ErrorCode::AlreadyExists,
         message: "Service 'config' already exists".to_string(),
+        request_id: None,
     };
 
     let json = serde_json::to_string(&response).expect("Should serialize");

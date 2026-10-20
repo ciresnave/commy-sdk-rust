@@ -188,6 +188,7 @@ async fn test_error_response_message() {
     let msg = ServerMessage::Error {
         code: ErrorCode::NotFound,
         message: "Service not found".to_string(),
+        request_id: None,
     };
 
     println!("Error response message format:");
