@@ -292,3 +292,38 @@ async fn several_clients_work_at_once() {
         t.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn grants_can_be_made_listed_and_revoked() {
+    let s = Server::start().await;
+    let admin = s.session("t_grants").await;
+    let svc = admin.create_service("t_grants", "svc", 4096).await.unwrap();
+
+    admin
+        .grant("bob", Some(&svc), &["service:read", "service:write"])
+        .await
+        .unwrap();
+    let mine = admin.list_grants(Some("bob"), None).await.unwrap();
+    assert_eq!(mine.len(), 1, "{mine:?}");
+    assert_eq!(mine[0].service_id.as_deref(), Some(svc.as_str()));
+    let mut perms = mine[0].permissions.clone();
+    perms.sort();
+    assert_eq!(perms, ["service:read", "service:write"]);
+
+    admin
+        .revoke("bob", Some(&svc), &["service:write"])
+        .await
+        .unwrap();
+    let after = admin.list_grants(Some("bob"), None).await.unwrap();
+    assert_eq!(after[0].permissions, ["service:read"]);
+
+    // A bad request is refused by the SDK, an unknown service by the server.
+    assert!(admin
+        .grant("bob", Some(&svc), &["service:delete"])
+        .await
+        .is_err());
+    assert!(admin
+        .grant("bob", Some("no-such-service"), &["service:read"])
+        .await
+        .is_err());
+}
