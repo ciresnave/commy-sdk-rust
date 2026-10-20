@@ -274,31 +274,43 @@ pub enum ServerMessage {
     Heartbeat { timestamp: String },
 }
 
-/// Explicit error codes for API responses
+/// Explicit error codes for API responses. Serialized `SCREAMING_SNAKE_CASE` (the commy-wire spelling);
+/// the CamelCase spellings older server handlers still send are accepted when reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     /// Resource not found (e.g., service doesn't exist)
+    #[serde(alias = "NotFound")]
     NotFound,
     /// Permission denied (unauthorized for this resource)
+    #[serde(alias = "PermissionDenied")]
     PermissionDenied,
     /// Invalid authentication credentials
+    #[serde(alias = "Unauthorized")]
     Unauthorized,
     /// Resource already exists
+    #[serde(alias = "AlreadyExists")]
     AlreadyExists,
     /// Invalid request parameters
+    #[serde(alias = "InvalidRequest")]
     InvalidRequest,
     /// Internal server error
+    #[serde(alias = "InternalError")]
     InternalError,
     /// Connection lost or disconnected
+    #[serde(alias = "ConnectionLost")]
     ConnectionLost,
     /// Operation timed out
+    #[serde(alias = "Timeout")]
     Timeout,
     /// The request needs authentication first (commy-wire `UNAUTHENTICATED`)
+    #[serde(alias = "Unauthenticated")]
     Unauthenticated,
     /// Too many requests (commy-wire `RATE_LIMITED`)
+    #[serde(alias = "RateLimited")]
     RateLimited,
     /// The protocol version is not supported (commy-wire `UNSUPPORTED_VERSION`)
+    #[serde(alias = "UnsupportedVersion")]
     UnsupportedVersion,
     /// A code this version does not know: the error still reaches the caller instead of the
     /// whole message being dropped.
@@ -1134,5 +1146,27 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn legacy_camel_case_codes_from_older_server_handlers_are_understood() {
+        for (spelling, want) in [
+            ("NotFound", ErrorCode::NotFound),
+            ("PermissionDenied", ErrorCode::PermissionDenied),
+            ("Unauthorized", ErrorCode::Unauthorized),
+            ("AlreadyExists", ErrorCode::AlreadyExists),
+            ("InvalidRequest", ErrorCode::InvalidRequest),
+            ("InternalError", ErrorCode::InternalError),
+            ("Unauthenticated", ErrorCode::Unauthenticated),
+            ("RateLimited", ErrorCode::RateLimited),
+        ] {
+            let json =
+                format!(r#"{{"type":"Error","data":{{"code":"{spelling}","message":"m"}}}}"#);
+            let m: ServerMessage = serde_json::from_str(&json).unwrap();
+            assert!(
+                matches!(&m, ServerMessage::Error { code, .. } if *code == want),
+                "{spelling} -> {m:?}"
+            );
+        }
     }
 }

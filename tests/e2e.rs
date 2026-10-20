@@ -292,8 +292,11 @@ async fn service_lifecycle_and_heartbeat() {
     let svc = c.get_service("t_life", "config").await.unwrap();
     assert_eq!(svc.id, id);
     assert!(
-        c.get_service("t_life", "missing").await.is_err(),
-        "get_service must not create"
+        matches!(
+            c.get_service("t_life", "missing").await,
+            Err(commy_sdk_rust::CommyError::NotFound(_))
+        ),
+        "get_service must not create, and the legacy handler's CamelCase code must read as NotFound"
     );
     c.heartbeat().await.unwrap();
     c.disconnect().await.unwrap();
