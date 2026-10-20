@@ -112,6 +112,9 @@ pub enum ClientMessage {
     /// List grants, optionally of one client and/or one service
     ListGrants(commy_wire::ListGrants),
 
+    /// Open or close a service to local memory mapping (needs `service:admin`)
+    SetLocalMapping(commy_wire::SetLocalMapping),
+
     /// This client has flushed everything into the old file (resize drain barrier)
     RotationDrained(commy_wire::RotationDrained),
 
@@ -219,6 +222,9 @@ pub enum ServerMessage {
 
     /// The answer to `ListGrants`
     Grants(commy_wire::Grants),
+
+    /// A `SetLocalMapping` took effect
+    LocalMappingAck(commy_wire::LocalMappingAck),
 
     /// Resize drain barrier is open: flush and answer `RotationDrained`
     RotationPending(commy_wire::RotationPending),

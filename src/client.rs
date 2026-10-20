@@ -1190,6 +1190,23 @@ impl Client {
         }
     }
 
+    /// Open (`true`) or close (`false`) a service to local memory mapping. Closed by default: until
+    /// an administrator opens it, [`Client::open_shared`] gets no path and stays on WSS ranges.
+    /// Needs `service:admin` on the service. Closing stops future offers; existing mappings end at
+    /// the next rotation. Returns the state the server confirms.
+    pub async fn set_local_mapping(&self, service_id: &str, enabled: bool) -> Result<bool> {
+        let id = Uuid::new_v4().to_string();
+        let msg = ClientMessage::SetLocalMapping(commy_wire::SetLocalMapping {
+            request_id: id.clone(),
+            service_id: service_id.to_string(),
+            enabled,
+        });
+        match self.grant_round_trip(msg, &id).await? {
+            ServerMessage::LocalMappingAck(a) => Ok(a.enabled),
+            _ => unreachable!("grant_round_trip returns only the acks it waits for"),
+        }
+    }
+
     /// Send a grant-family request and wait for the reply carrying its `request_id`.
     async fn grant_round_trip(
         &self,
@@ -1210,6 +1227,9 @@ impl Client {
                     return Ok(reply)
                 }
                 Ok(Ok(Some(reply @ ServerMessage::Grants(_)))) if matches!(&reply, ServerMessage::Grants(g) if g.request_id == request_id) => {
+                    return Ok(reply)
+                }
+                Ok(Ok(Some(reply @ ServerMessage::LocalMappingAck(_)))) if matches!(&reply, ServerMessage::LocalMappingAck(a) if a.request_id == request_id) => {
                     return Ok(reply)
                 }
                 Ok(Ok(Some(ServerMessage::Error { code, .. }))) => {
@@ -3998,6 +4018,50 @@ mod grant_tests {
         let entries = res.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].permissions, ["service:read"]);
+    }
+
+    #[tokio::test]
+    async fn set_local_mapping_returns_the_confirmed_state() {
+        let (c, to, mut from) = client().await;
+        let fut = c.set_local_mapping("svc", true);
+        let drive = async {
+            let ClientMessage::SetLocalMapping(m) = from.recv().await.unwrap() else {
+                panic!("expected SetLocalMapping");
+            };
+            assert_eq!((m.service_id.as_str(), m.enabled), ("svc", true));
+            to.send(ServerMessage::LocalMappingAck(
+                commy_wire::LocalMappingAck {
+                    request_id: "other".into(),
+                    service_id: "svc".into(),
+                    enabled: false,
+                },
+            ))
+            .unwrap();
+            to.send(ServerMessage::LocalMappingAck(
+                commy_wire::LocalMappingAck {
+                    request_id: m.request_id,
+                    service_id: "svc".into(),
+                    enabled: true,
+                },
+            ))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(res.unwrap(), "the ack for another request must be ignored");
+    }
+
+    #[tokio::test]
+    async fn set_local_mapping_surfaces_a_refusal() {
+        let (c, to, _from) = client().await;
+        to.send(ServerMessage::Error {
+            code: crate::message::ErrorCode::PermissionDenied,
+            message: "not an admin".into(),
+        })
+        .unwrap();
+        assert!(matches!(
+            c.set_local_mapping("svc", true).await,
+            Err(CommyError::PermissionDenied(_))
+        ));
     }
 
     #[tokio::test]
