@@ -11,13 +11,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Wire message types the SDK deliberately does not carry as such yet, with the reason. Shrink this.
-const NOT_CARRIED: &[(&str, &str)] = &[(
-    "Authenticate",
-    "the SDK sends its own Authenticate (client_version, flattened credentials, dev_scopes); the \
-         wire shape (request_id, protocol_version, auth_method, credentials) is not used, and the \
-         server's AuthenticationResult has no wire counterpart",
-)];
+/// Wire message types the SDK deliberately does not carry as such, with the reason. Empty since the SDK
+/// moved to the commy-wire `Authenticate` / `AuthenticationResult` (0.4.0).
+const NOT_CARRIED: &[(&str, &str)] = &[];
 
 /// Invalid wire vectors the SDK accepts on purpose, with the reason. Shrink this.
 const TOLERATED_INVALID: &[(&str, &str)] = &[(
