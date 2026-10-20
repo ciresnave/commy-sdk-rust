@@ -299,8 +299,7 @@ impl Client {
         self.send_message(ClientMessage::Authenticate(request))
             .await?;
 
-        // Wait for the authentication result (an older server sends none naming the request: an
-        // empty id is accepted)
+        // Wait for the authentication result that names this request
         let guard = self.connection.read().await;
         let Some(conn) = guard.as_ref() else {
             return Err(CommyError::ConnectionLost(
@@ -311,7 +310,7 @@ impl Client {
         loop {
             match tokio::time::timeout_at(deadline, conn.recv()).await {
                 Ok(Ok(Some(ServerMessage::AuthenticationResult(r))))
-                    if r.request_id.is_empty() || r.request_id == request_id =>
+                    if r.request_id == request_id =>
                 {
                     if !r.success {
                         return Err(CommyError::AuthenticationFailed(r.message));
@@ -2182,20 +2181,27 @@ mod tests {
     #[tokio::test]
     async fn test_authenticate_success_false_returns_auth_failed() {
         let client = Client::new("wss://test");
-        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
-        server_tx
-            .send(crate::message::ServerMessage::AuthenticationResult(
-                commy_wire::AuthenticationResult {
-                    request_id: String::new(),
-                    success: false,
-                    message: "invalid credentials".to_string(),
-                    server_version: "0.1.0".to_string(),
-                    client_id: None,
-                    permissions: None,
-                    expires_in_seconds: None,
-                },
-            ))
-            .expect("pre-send failed");
+        let (conn, server_tx, mut client_rx) = crate::connection::Connection::new_for_test();
+        // Answer the Authenticate that arrives, naming its request.
+        tokio::spawn(async move {
+            let Some(crate::message::ClientMessage::Authenticate(a)) = client_rx.recv().await
+            else {
+                panic!("expected Authenticate");
+            };
+            server_tx
+                .send(crate::message::ServerMessage::AuthenticationResult(
+                    commy_wire::AuthenticationResult {
+                        request_id: a.request_id,
+                        success: false,
+                        message: "invalid credentials".to_string(),
+                        server_version: "0.1.0".to_string(),
+                        client_id: None,
+                        permissions: None,
+                        expires_in_seconds: None,
+                    },
+                ))
+                .expect("reply");
+        });
         client.inject_connection_for_test(conn).await;
 
         let creds = crate::message::AuthCredentials::ApiKey {
@@ -2513,21 +2519,28 @@ mod tests {
     #[tokio::test]
     async fn test_authenticate_success_transitions_to_authenticated_state() {
         let client = Client::new("wss://test");
-        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        let (conn, server_tx, mut client_rx) = crate::connection::Connection::new_for_test();
         // Pre-load a successful AuthenticationResult
-        server_tx
-            .send(crate::message::ServerMessage::AuthenticationResult(
-                commy_wire::AuthenticationResult {
-                    request_id: String::new(),
-                    success: true,
-                    message: "Welcome".to_string(),
-                    server_version: "1.0.0".to_string(),
-                    client_id: None,
-                    permissions: Some(vec!["read".to_string(), "write".to_string()]),
-                    expires_in_seconds: None,
-                },
-            ))
-            .expect("pre-send");
+        // Answer the Authenticate that arrives, naming its request.
+        tokio::spawn(async move {
+            let Some(crate::message::ClientMessage::Authenticate(a)) = client_rx.recv().await
+            else {
+                panic!("expected Authenticate");
+            };
+            server_tx
+                .send(crate::message::ServerMessage::AuthenticationResult(
+                    commy_wire::AuthenticationResult {
+                        request_id: a.request_id,
+                        success: true,
+                        message: "Welcome".to_string(),
+                        server_version: "1.0.0".to_string(),
+                        client_id: None,
+                        permissions: Some(vec!["read".to_string(), "write".to_string()]),
+                        expires_in_seconds: None,
+                    },
+                ))
+                .expect("reply");
+        });
         client.inject_connection_for_test(conn).await;
 
         let creds = crate::message::AuthCredentials::ApiKey {
