@@ -138,7 +138,7 @@ pub enum ClientMessage {
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
     /// The answer to `Authenticate`. A server older than commy-wire 0.4.0 sends no `request_id`;
-    /// that reads as an empty one, which the waiting call accepts (see [`legacy_auth_result`]).
+    /// that reads as an empty one, which the waiting call accepts (see `legacy_auth_result`).
     AuthenticationResult(
         #[serde(deserialize_with = "legacy_auth_result")] commy_wire::AuthenticationResult,
     ),
