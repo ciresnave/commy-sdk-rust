@@ -283,45 +283,61 @@ impl Client {
         tenant_id: &str,
         credentials: AuthCredentials,
     ) -> Result<AuthContext> {
-        self.send_message(ClientMessage::Authenticate {
+        let request = commy_wire::Authenticate {
+            request_id: Uuid::new_v4().to_string(),
+            protocol_version: commy_wire::PROTOCOL_VERSION,
             tenant_id: tenant_id.to_string(),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
-            client_id: self.client_id.clone(),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            client_id: Some(self.client_id.clone()),
             dev_scopes: self.dev_scopes.clone(),
-            credentials: credentials.clone(),
-        })
-        .await?;
+            credentials: (&credentials).into(),
+        };
+        request
+            .validate()
+            .map_err(|e| CommyError::InvalidRequest(e.to_string()))?;
+        let request_id = request.request_id.clone();
+        self.send_message(ClientMessage::Authenticate(request))
+            .await?;
 
-        // Wait for authentication result
-        if let Some(conn) = &*self.connection.read().await {
-            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
-                Ok(Ok(Some(ServerMessage::AuthenticationResult {
-                    success: true,
-                    permissions,
-                    ..
-                }))) => {
+        // Wait for the authentication result (an older server sends none naming the request: an
+        // empty id is accepted)
+        let guard = self.connection.read().await;
+        let Some(conn) = guard.as_ref() else {
+            return Err(CommyError::ConnectionLost(
+                "Connection not established".to_string(),
+            ));
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match tokio::time::timeout_at(deadline, conn.recv()).await {
+                Ok(Ok(Some(ServerMessage::AuthenticationResult(r))))
+                    if r.request_id.is_empty() || r.request_id == request_id =>
+                {
+                    if !r.success {
+                        return Err(CommyError::AuthenticationFailed(r.message));
+                    }
                     let auth_context =
-                        AuthContext::new(tenant_id.to_string(), permissions.unwrap_or_default());
-
+                        AuthContext::new(tenant_id.to_string(), r.permissions.unwrap_or_default());
                     let mut state = self.state.write().await;
                     state.connection_state = ConnectionState::Authenticated;
                     state.add_auth_context(tenant_id.to_string(), auth_context.clone());
-
-                    Ok(auth_context)
+                    return Ok(auth_context);
                 }
-                Ok(Ok(Some(ServerMessage::AuthenticationResult {
-                    success: false,
-                    message,
+                Ok(Ok(Some(ServerMessage::Error {
+                    code,
+                    request_id: erid,
                     ..
-                }))) => Err(CommyError::AuthenticationFailed(message)),
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
-                Err(_) => Err(CommyError::Timeout),
-                _ => Err(CommyError::Timeout),
+                }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
+                    return Err(CommyError::from(code))
+                }
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during authenticate".to_string(),
+                    ))
+                }
+                Err(_) => return Err(CommyError::Timeout),
             }
-        } else {
-            Err(CommyError::ConnectionLost(
-                "Connection not established".to_string(),
-            ))
         }
     }
 
@@ -2168,13 +2184,17 @@ mod tests {
         let client = Client::new("wss://test");
         let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
         server_tx
-            .send(crate::message::ServerMessage::AuthenticationResult {
-                success: false,
-                message: "invalid credentials".to_string(),
-                server_version: "0.1.0".to_string(),
-                client_id: None,
-                permissions: None,
-            })
+            .send(crate::message::ServerMessage::AuthenticationResult(
+                commy_wire::AuthenticationResult {
+                    request_id: String::new(),
+                    success: false,
+                    message: "invalid credentials".to_string(),
+                    server_version: "0.1.0".to_string(),
+                    client_id: None,
+                    permissions: None,
+                    expires_in_seconds: None,
+                },
+            ))
             .expect("pre-send failed");
         client.inject_connection_for_test(conn).await;
 
@@ -2496,13 +2516,17 @@ mod tests {
         let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
         // Pre-load a successful AuthenticationResult
         server_tx
-            .send(crate::message::ServerMessage::AuthenticationResult {
-                success: true,
-                message: "Welcome".to_string(),
-                server_version: "1.0.0".to_string(),
-                client_id: None,
-                permissions: Some(vec!["read".to_string(), "write".to_string()]),
-            })
+            .send(crate::message::ServerMessage::AuthenticationResult(
+                commy_wire::AuthenticationResult {
+                    request_id: String::new(),
+                    success: true,
+                    message: "Welcome".to_string(),
+                    server_version: "1.0.0".to_string(),
+                    client_id: None,
+                    permissions: Some(vec!["read".to_string(), "write".to_string()]),
+                    expires_in_seconds: None,
+                },
+            ))
             .expect("pre-send");
         client.inject_connection_for_test(conn).await;
 

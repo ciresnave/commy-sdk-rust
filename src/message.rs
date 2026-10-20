@@ -6,19 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ClientMessage {
-    /// Authenticate with a tenant
-    Authenticate {
-        tenant_id: String,
-        client_version: String,
-        /// The identity grants are filed under (1 to 128 characters of letters, digits and `_-.@:`)
-        client_id: String,
-        /// Development servers only: ask for exactly these scopes (`[]` for none) instead of
-        /// administrator. A production server ignores or refuses it.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        dev_scopes: Option<Vec<String>>,
-        #[serde(flatten)]
-        credentials: AuthCredentials,
-    },
+    /// Authenticate with a tenant (the commy-wire message: request id, protocol version, credentials)
+    Authenticate(commy_wire::Authenticate),
 
     /// Create a new tenant (admin operation)
     CreateTenant {
@@ -148,17 +137,11 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
-    /// Authentication result
-    AuthenticationResult {
-        success: bool,
-        message: String,
-        server_version: String,
-        /// The identity the server filed this session under (grants name it)
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        client_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        permissions: Option<Vec<String>>,
-    },
+    /// The answer to `Authenticate`. A server older than commy-wire 0.4.0 sends no `request_id`;
+    /// that reads as an empty one, which the waiting call accepts (see [`legacy_auth_result`]).
+    AuthenticationResult(
+        #[serde(deserialize_with = "legacy_auth_result")] commy_wire::AuthenticationResult,
+    ),
 
     /// Service created or retrieved
     Service {
@@ -419,6 +402,43 @@ pub enum Permission {
     Execute,
 }
 
+/// Read an `AuthenticationResult`, filling in an empty `request_id` when an older server omits it.
+/// Remove with the servers that speak commy-wire 0.3.x.
+fn legacy_auth_result<'de, D>(
+    d: D,
+) -> std::result::Result<commy_wire::AuthenticationResult, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let mut v = serde_json::Value::deserialize(d)?;
+    if let Some(o) = v.as_object_mut() {
+        o.entry("request_id").or_insert_with(|| "".into());
+    }
+    serde_json::from_value(v).map_err(D::Error::custom)
+}
+
+impl From<&AuthCredentials> for commy_wire::Credentials {
+    /// The wire form of the credentials. The secrets are exposed here, on their way to the server.
+    fn from(c: &AuthCredentials) -> Self {
+        match c {
+            AuthCredentials::ApiKey { key } => commy_wire::Credentials::ApiKey {
+                key: key.expose().clone(),
+            },
+            AuthCredentials::Jwt { token } => commy_wire::Credentials::Jwt {
+                token: token.expose().clone(),
+            },
+            AuthCredentials::Basic { username, password } => commy_wire::Credentials::Basic {
+                username: username.clone(),
+                password: password.expose().clone(),
+            },
+            AuthCredentials::Custom { data } => commy_wire::Credentials::Custom {
+                data: data.expose().clone(),
+            },
+        }
+    }
+}
+
 /// Convert ErrorCode to CommyError
 impl From<ErrorCode> for crate::error::CommyError {
     fn from(code: ErrorCode) -> Self {
@@ -522,18 +542,21 @@ mod tests {
 
     #[test]
     fn test_client_message_authenticate_serialization() {
-        let msg = ClientMessage::Authenticate {
+        let msg = ClientMessage::Authenticate(commy_wire::Authenticate {
+            request_id: "r1".to_string(),
+            protocol_version: commy_wire::PROTOCOL_VERSION,
             tenant_id: "tenant1".to_string(),
-            client_version: "0.1.0".to_string(),
-            client_id: "c1".to_string(),
+            client_version: Some("0.1.0".to_string()),
+            client_id: Some("c1".to_string()),
             dev_scopes: None,
-            credentials: AuthCredentials::ApiKey {
+            credentials: (&AuthCredentials::ApiKey {
                 key: "secret".into(),
-            },
-        };
+            })
+                .into(),
+        });
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
-        assert!(matches!(decoded, ClientMessage::Authenticate { .. }));
+        assert!(matches!(decoded, ClientMessage::Authenticate(_)));
     }
 
     #[test]
@@ -548,19 +571,30 @@ mod tests {
 
     #[test]
     fn test_server_message_authentication_result_serialization() {
-        let msg = ServerMessage::AuthenticationResult {
+        let msg = ServerMessage::AuthenticationResult(commy_wire::AuthenticationResult {
+            request_id: "r1".to_string(),
             success: true,
             message: "OK".to_string(),
             server_version: "0.1.0".to_string(),
             client_id: None,
             permissions: Some(vec!["read".to_string()]),
-        };
+            expires_in_seconds: None,
+        });
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
         assert!(matches!(
             decoded,
-            ServerMessage::AuthenticationResult { success: true, .. }
+            ServerMessage::AuthenticationResult(r) if r.success && r.request_id == "r1"
         ));
+    }
+
+    #[test]
+    fn an_authentication_result_without_request_id_from_an_older_server_still_reads() {
+        let legacy = r#"{"type":"AuthenticationResult","data":{"success":true,"message":"ok","server_version":"0.13.0","client_id":"c","permissions":["all"]}}"#;
+        let m: ServerMessage = serde_json::from_str(legacy).unwrap();
+        assert!(
+            matches!(m, ServerMessage::AuthenticationResult(r) if r.request_id.is_empty() && r.success)
+        );
     }
 
     #[test]
@@ -632,13 +666,15 @@ mod tests {
             ),
         ];
         for (creds, secret) in cases {
-            let msg = ClientMessage::Authenticate {
+            let msg = ClientMessage::Authenticate(commy_wire::Authenticate {
+                request_id: "r".into(),
+                protocol_version: commy_wire::PROTOCOL_VERSION,
                 tenant_id: "t".into(),
-                client_version: "v".into(),
-                client_id: "c".into(),
+                client_version: Some("v".into()),
+                client_id: Some("c".into()),
                 dev_scopes: None,
-                credentials: creds.clone(),
-            };
+                credentials: (&creds).into(),
+            });
             for shown in [
                 format!("{:?}", creds),
                 format!("{:#?}", creds),
@@ -649,7 +685,7 @@ mod tests {
                     "Debug output leaked {secret}: {shown}"
                 );
                 assert!(
-                    shown.contains("REDACTED"),
+                    shown.to_lowercase().contains("redacted"),
                     "expected redaction marker in {shown}"
                 );
             }
