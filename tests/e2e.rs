@@ -327,3 +327,52 @@ async fn grants_can_be_made_listed_and_revoked() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revocation() {
+    use commy_sdk_rust::CommyError;
+    let s = Server::start().await;
+    let admin = s.session("t_denied").await;
+    let svc = admin.create_service("t_denied", "svc", 4096).await.unwrap();
+
+    // `bob` authenticates with no scopes: he holds nothing until an administrator grants it.
+    let bob = s.client().with_dev_scopes(&[]);
+    bob.connect().await.unwrap();
+    bob.authenticate("t_denied", auth::api_key("x".to_string()))
+        .await
+        .unwrap();
+    let denied = bob.open_remote(&svc).await.unwrap_err();
+    assert!(
+        matches!(denied, CommyError::PermissionDenied(_)),
+        "{denied:?}"
+    );
+
+    admin
+        .grant(bob.id(), Some(&svc), &["service:write"])
+        .await
+        .unwrap();
+    bob.open_remote(&svc).await.expect("allowed once granted");
+    bob.shared_write(&svc, 0, b"hi").await.unwrap();
+    bob.flush_shared(&svc).await.unwrap();
+
+    // Removing him from the service drops his mapping and moves the file.
+    admin.revoke(bob.id(), Some(&svc), &[]).await.unwrap();
+    let mut lost = false;
+    for _ in 0..20 {
+        if let SharedEvent::Loss(l) = bob.poll_shared_events(WAIT).await.unwrap() {
+            assert_eq!(l.kind, commy_wire::LossKind::Revoked);
+            lost = true;
+            break;
+        }
+    }
+    assert!(lost, "bob must be told he lost access");
+    assert!(matches!(
+        bob.shared_read(&svc, 0, 2).await,
+        Err(CommyError::NotFound(_))
+    ));
+    let again = bob.open_remote(&svc).await.unwrap_err();
+    assert!(
+        matches!(again, CommyError::PermissionDenied(_)),
+        "{again:?}"
+    );
+}

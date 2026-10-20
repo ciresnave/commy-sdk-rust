@@ -115,6 +115,9 @@ pub struct Client {
     /// PEM certificates to trust instead of the system roots (self-signed development servers)
     tls_root_pem: Option<Vec<u8>>,
 
+    /// Development servers: authenticate with exactly these scopes instead of administrator
+    dev_scopes: Option<Vec<String>>,
+
     /// Current reconnection attempt
     reconnect_attempts: Arc<AtomicU64>,
 
@@ -171,6 +174,7 @@ impl Client {
             heartbeat_interval: Duration::from_secs(30),
             max_reconnect_attempts: 5,
             tls_root_pem: None,
+            dev_scopes: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
@@ -183,6 +187,14 @@ impl Client {
     /// (a server with a self-signed certificate). Use it only for servers you control.
     pub fn with_tls_root_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
         self.tls_root_pem = Some(pem.into());
+        self
+    }
+
+    /// Development servers only: authenticate with exactly `scopes` (`&[]` for none) instead of
+    /// administrator, so this client holds no grant until an administrator gives it one. A
+    /// production server ignores or refuses the request.
+    pub fn with_dev_scopes(mut self, scopes: &[&str]) -> Self {
+        self.dev_scopes = Some(scopes.iter().map(|s| s.to_string()).collect());
         self
     }
 
@@ -203,6 +215,7 @@ impl Client {
             heartbeat_interval: Duration::from_secs(30),
             max_reconnect_attempts: 5,
             tls_root_pem: None,
+            dev_scopes: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
@@ -273,6 +286,8 @@ impl Client {
         self.send_message(ClientMessage::Authenticate {
             tenant_id: tenant_id.to_string(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_id: self.client_id.clone(),
+            dev_scopes: self.dev_scopes.clone(),
             credentials: credentials.clone(),
         })
         .await?;
@@ -2104,6 +2119,7 @@ mod tests {
                 success: false,
                 message: "invalid credentials".to_string(),
                 server_version: "0.1.0".to_string(),
+                client_id: None,
                 permissions: None,
             })
             .expect("pre-send failed");
@@ -2427,6 +2443,7 @@ mod tests {
                 success: true,
                 message: "Welcome".to_string(),
                 server_version: "1.0.0".to_string(),
+                client_id: None,
                 permissions: Some(vec!["read".to_string(), "write".to_string()]),
             })
             .expect("pre-send");
