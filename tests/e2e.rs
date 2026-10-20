@@ -16,6 +16,7 @@ struct Server {
     child: Child,
     bin: String,
     port: u16,
+    extra_env: Vec<(String, String)>,
     _dir: tempfile::TempDir,
     url: String,
     cert_pem: String,
@@ -23,7 +24,12 @@ struct Server {
 
 /// Start the server binary in `dir` (its working directory, so its `commy_state` and tenant
 /// directories live there) on `port`, appending to the same logs.
-fn spawn_server(bin: &str, dir: &std::path::Path, port: u16) -> Child {
+fn spawn_server(
+    bin: &str,
+    dir: &std::path::Path,
+    port: u16,
+    extra_env: &[(String, String)],
+) -> Child {
     let log = |n: &str| {
         std::fs::OpenOptions::new()
             .create(true)
@@ -40,6 +46,7 @@ fn spawn_server(bin: &str, dir: &std::path::Path, port: u16) -> Child {
         .env("COMMY_ALLOW_DEV_AUTH", "1")
         // Anything not starting with postgresql:// or mysql:// selects in-memory auth storage.
         .env("DATABASE_URL", "memory")
+        .envs(extra_env.iter().map(|(k, v)| (k, v)))
         .stdout(log("out.log"))
         .stderr(log("err.log"))
         .stdin(Stdio::null())
@@ -56,6 +63,15 @@ impl Drop for Server {
 
 impl Server {
     async fn start() -> Self {
+        Self::start_with(&[]).await
+    }
+
+    /// Start with extra environment variables for the server (limits and timeouts).
+    async fn start_with(extra_env: &[(&str, &str)]) -> Self {
+        let extra_env: Vec<(String, String)> = extra_env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         let bin = std::env::var("COMMY_BIN")
             .expect("COMMY_BIN must name a built commy server binary for the e2e tests");
         let dir = tempfile::tempdir().unwrap();
@@ -70,11 +86,12 @@ impl Server {
             .local_addr()
             .unwrap()
             .port();
-        let child = spawn_server(&bin, dir.path(), port);
+        let child = spawn_server(&bin, dir.path(), port, &extra_env);
         let mut server = Server {
             child,
             bin,
             port,
+            extra_env,
             _dir: dir,
             url: format!("wss://127.0.0.1:{port}"),
             cert_pem,
@@ -103,7 +120,7 @@ impl Server {
     async fn restart(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        self.child = spawn_server(&self.bin, self._dir.path(), self.port);
+        self.child = spawn_server(&self.bin, self._dir.path(), self.port, &self.extra_env);
         self.wait_ready().await;
     }
 
@@ -596,4 +613,51 @@ async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
         matches!(denied, CommyError::PermissionDenied(_)),
         "a revoked grant must stay revoked: {denied:?}"
     );
+}
+
+#[tokio::test]
+async fn a_member_that_never_drains_is_dropped_as_a_straggler_and_the_resize_goes_on() {
+    use commy_sdk_rust::CommyError;
+    // A short drain barrier so the test does not wait the default 5 s.
+    let s = Server::start_with(&[("COMMY_DRAIN_TIMEOUT_MS", "500")]).await;
+    let (a, silent, svc) = rotation_rig(&s, "t_straggler").await;
+    a.request_rotation(&svc, RotateReason::Resize, Some(16384), None)
+        .await
+        .unwrap();
+
+    let requester = async {
+        let p = next_pending(&a).await;
+        let RotationOutcome::Prepared(r) = a.drain_for_rotation(&p).await.unwrap() else {
+            panic!("the requester must be asked to fill");
+        };
+        let mut fill = a.begin_fill(&p, &r).unwrap();
+        let old = a.shared_read(&svc, 10, 10).await.unwrap();
+        fill.write(4096, &old).unwrap();
+        a.finish_fill(fill).await.unwrap()
+    };
+    // The straggler sees the barrier open and then does nothing: it never calls drain_for_rotation.
+    let straggler = async {
+        let _pending = next_pending(&silent).await;
+        for _ in 0..20 {
+            if let SharedEvent::Loss(l) = silent.poll_shared_events(WAIT).await.unwrap() {
+                return l;
+            }
+        }
+        panic!("the straggler was never told it lost the service");
+    };
+    let (outcome, loss) = tokio::join!(requester, straggler);
+    assert!(
+        matches!(outcome, RotationOutcome::Committed(_)),
+        "the resize must not wait for a member that does not answer"
+    );
+    assert_eq!(loss.kind, commy_wire::LossKind::RotationStraggler);
+    // Its mapping is gone, and it cannot get back into the service's new file without a new join.
+    assert!(matches!(
+        silent.shared_read(&svc, 10, 10).await,
+        Err(CommyError::NotFound(_))
+    ));
+    // Everyone who drained is on the new file and writes resume there.
+    assert_eq!(a.shared_read(&svc, 4096, 10).await.unwrap(), b"old layout");
+    a.shared_write(&svc, 12000, b"after").await.unwrap();
+    a.flush_shared(&svc).await.unwrap();
 }
