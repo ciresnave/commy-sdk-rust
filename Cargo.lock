@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "commy-sdk-rust"
-version = "0.11.4"
+version = "0.11.5"
 dependencies = [
  "async-trait",
  "axum",
