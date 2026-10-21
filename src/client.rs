@@ -1604,7 +1604,7 @@ impl Client {
     /// Switch a service to the file named by a `RotationCommit`: re-run the local handshake (or
     /// `Resync` when no mapping is offered). After a revocation, unflushed local writes are
     /// written into the new file and flushed; after a resize they are never replayed. A commit
-    /// whose generation is not newer than the mapped one is a duplicate and ignored.
+    /// that names the already-mapped file as its new file is a duplicate and ignored.
     pub async fn complete_rotation(&self, c: &commy_wire::RotationCommit) -> Result<()> {
         let (was_local, pending) = {
             let mut shared = self.shared.write().await;
@@ -1614,7 +1614,7 @@ impl Client {
                     c.service_id
                 )));
             };
-            if c.generation <= file.generation() {
+            if file.file_id() == c.new_file_id {
                 return Ok(());
             }
             if file.file_id() != c.old_file_id {
@@ -1647,9 +1647,6 @@ impl Client {
                 "server offered file {new_id}, commit named {}",
                 c.new_file_id
             )));
-        }
-        if let Some(f) = self.shared.write().await.get_mut(&c.service_id) {
-            f.set_generation(c.generation);
         }
         if !pending.is_empty() {
             for (offset, bytes) in &pending {
@@ -3477,14 +3474,13 @@ mod rotation_tests {
         }
     }
 
-    fn commit(rid: &str, reason: RotateReason, generation: u64) -> RotationCommit {
+    fn commit(rid: &str, reason: RotateReason) -> RotationCommit {
         RotationCommit {
             rotation_id: rid.to_string(),
             service_id: "svc".to_string(),
             reason,
             old_file_id: 5,
             new_file_id: 6,
-            generation,
             size: 16384,
         }
     }
@@ -3563,7 +3559,6 @@ mod rotation_tests {
                 .send(ServerMessage::RotationCommit(commit(
                     "rot1",
                     RotateReason::Resize,
-                    1,
                 )))
                 .unwrap();
             serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
@@ -3575,7 +3570,7 @@ mod rotation_tests {
         assert_eq!(c.new_file_id, 6);
         let shared = client.shared.read().await;
         let f = shared.get("svc").unwrap();
-        assert_eq!((f.file_id(), f.generation()), (6, 1));
+        assert_eq!(f.file_id(), 6);
         assert!(!f.is_draining());
         assert!(
             f.view().iter().all(|b| *b == 0),
@@ -3666,15 +3661,14 @@ mod rotation_tests {
                 .send(ServerMessage::RotationCommit(commit(
                     "rotB",
                     RotateReason::Resize,
-                    1,
                 )))
                 .unwrap();
         };
         let (res, ()) = tokio::join!(fut, drive);
         assert!(matches!(res.unwrap(), RotationOutcome::Aborted(_)));
         assert_eq!(
-            client.shared.read().await.get("svc").unwrap().generation(),
-            0,
+            client.shared.read().await.get("svc").unwrap().file_id(),
+            5,
             "the late commit must not switch the mapping"
         );
     }
@@ -3718,17 +3712,13 @@ mod rotation_tests {
                 .send(ServerMessage::RotationCommit(commit(
                     "rotC",
                     RotateReason::Resize,
-                    1,
                 )))
                 .unwrap();
             serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
         };
         let (res, ()) = tokio::join!(fut, drive);
         assert!(matches!(res, RotationOutcome::Committed(_)));
-        assert_eq!(
-            client.shared.read().await.get("svc").unwrap().generation(),
-            1
-        );
+        assert_eq!(client.shared.read().await.get("svc").unwrap().file_id(), 6);
     }
 
     #[tokio::test]
@@ -3888,7 +3878,7 @@ mod rotation_tests {
             dir,
         } = rig().await;
         client.shared_write("svc", 100, &[7, 7]).await.unwrap();
-        let c = commit("rot3", RotateReason::Revocation, 1);
+        let c = commit("rot3", RotateReason::Revocation);
         let fut = client.complete_rotation(&c);
         let drive = async {
             serve_new_local_file(&to_client, &mut from_client, dir.path(), 16384).await;
@@ -3925,17 +3915,9 @@ mod rotation_tests {
             mut from_client,
             ..
         } = rig().await;
-        client
-            .shared
-            .write()
-            .await
-            .get_mut("svc")
-            .unwrap()
-            .set_generation(3);
-        client
-            .complete_rotation(&commit("old", RotateReason::Resize, 3))
-            .await
-            .unwrap();
+        let mut c = commit("old", RotateReason::Resize);
+        c.new_file_id = 5;
+        client.complete_rotation(&c).await.unwrap();
         assert!(
             from_client.try_recv().is_err(),
             "no handshake for a duplicate"
@@ -3946,7 +3928,7 @@ mod rotation_tests {
     #[tokio::test]
     async fn commit_naming_the_wrong_old_file_is_refused() {
         let Rig { client, .. } = rig().await;
-        let mut c = commit("r", RotateReason::Resize, 1);
+        let mut c = commit("r", RotateReason::Resize);
         c.old_file_id = 99;
         assert!(matches!(
             client.complete_rotation(&c).await,
@@ -3998,7 +3980,6 @@ mod rotation_tests {
             .send(ServerMessage::RotationCommit(commit(
                 "a",
                 RotateReason::Resize,
-                1,
             )))
             .unwrap();
         assert!(matches!(

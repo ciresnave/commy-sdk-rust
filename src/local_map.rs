@@ -186,7 +186,7 @@ impl LocalMap {
     /// The caller's view of the file.
     ///
     /// Other processes write this memory while the slice is alive, so the slice is not stable.
-    /// Treat it as a doc-level convenience until the S5 generation guards exist; do not hold
+    /// Treat it as a doc-level convenience until rotation guards cover the view; do not hold
     /// references across awaits or assume two reads agree.
     pub fn view(&self) -> &[u8] {
         &self.view
