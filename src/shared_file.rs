@@ -115,7 +115,6 @@ pub struct SharedFile {
     file_id: u32,
     seq: u64,
     last_applied: u64,
-    generation: u64,
     draining: bool,
 }
 
@@ -131,7 +130,6 @@ impl SharedFile {
             file_id,
             seq: 0,
             last_applied: 0,
-            generation: 0,
             draining: false,
         }
     }
@@ -148,7 +146,6 @@ impl SharedFile {
             file_id,
             seq,
             last_applied: seq,
-            generation: 0,
             draining: false,
         }
     }
@@ -225,15 +222,6 @@ impl SharedFile {
     /// True when the bytes are a mapping shared with the server (changes travel as ranges only).
     pub fn is_local(&self) -> bool {
         matches!(self.map, Backing::Mapped(_))
-    }
-
-    /// Rotation generation this file belongs to (0 before any rotation).
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn set_generation(&mut self, generation: u64) {
-        self.generation = generation;
     }
 
     /// Open or close the drain barrier: while open, `write_range` is refused.

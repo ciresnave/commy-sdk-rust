@@ -238,7 +238,7 @@ async fn resize_rotation_requester_fills_the_new_file_and_everyone_switches() {
     let (RotationOutcome::Committed(ca), RotationOutcome::Committed(cb)) = (ra, rb) else {
         panic!("both must commit");
     };
-    assert_eq!((ca.generation, ca.size), (1, 16384));
+    assert_eq!(ca.size, 16384);
     assert_eq!(ca.new_file_id, cb.new_file_id);
     assert_ne!(ca.new_file_id, ca.old_file_id);
     for c in [&a, &b] {
