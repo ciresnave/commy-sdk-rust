@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Global state
 let currentExample = null;
 let runningCount = 0;
