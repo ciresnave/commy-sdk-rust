@@ -143,19 +143,6 @@ impl Connection {
         *self.state.read().await
     }
 
-    /// Set connection state
-    pub async fn set_state(&self, state: ConnectionState) {
-        *self.state.write().await = state;
-    }
-
-    /// Check if connected
-    pub async fn is_connected(&self) -> bool {
-        matches!(
-            *self.state.read().await,
-            ConnectionState::Connected | ConnectionState::Authenticated
-        )
-    }
-
     /// Create a mock connection for testing that uses in-memory channels.
     ///
     /// Returns `(conn, server_tx, client_rx)` where:

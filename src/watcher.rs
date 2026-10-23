@@ -252,42 +252,6 @@ impl VariableFileWatcher {
     }
 }
 
-/// Create temporary file for a service
-pub async fn create_temp_service_file(service_id: &str) -> Result<PathBuf> {
-    let temp_dir = dirs::cache_dir().ok_or_else(|| {
-        CommyError::FileError(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "No cache directory",
-        ))
-    })?;
-
-    let commy_dir = temp_dir.join("commy_virtual_files");
-    fs::create_dir_all(&commy_dir)?;
-
-    let file_path = commy_dir.join(format!("service_{}.mem", service_id));
-
-    // Create the file (without truncating an existing one) so it exists before its permissions are set;
-    // on Unix create it owner-only from the start.
-    let mut open = fs::OpenOptions::new();
-    open.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        open.mode(0o600);
-    }
-    open.open(&file_path)?;
-
-    // Ensure only current user can read/write (also tightens a pre-existing file)
-    #[cfg(unix)]
-    {
-        use std::fs::Permissions;
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&file_path, Permissions::from_mode(0o600))?;
-    }
-
-    Ok(file_path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,22 +260,6 @@ mod tests {
     async fn test_watcher_creation() {
         let watcher = VariableFileWatcher::new(None).await.unwrap();
         assert!(watcher.watch_dir().exists());
-    }
-
-    #[tokio::test]
-    async fn test_temp_file_creation() {
-        let path = create_temp_service_file("test_service").await.unwrap();
-        assert!(path.to_string_lossy().contains("service_test_service.mem"));
-        assert!(
-            path.exists(),
-            "create_temp_service_file must create the file"
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "service file must be owner-only");
-        }
     }
 
     #[tokio::test]

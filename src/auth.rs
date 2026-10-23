@@ -2,7 +2,6 @@
 //! Authentication utilities
 
 pub use crate::message::{AuthCredentials, Secret};
-use crate::Result;
 
 /// Authentication context for a session
 #[derive(Debug, Clone)]
@@ -58,23 +57,6 @@ pub fn basic(username: String, password: String) -> AuthCredentials {
     }
 }
 
-/// Validate a token format (basic validation)
-pub fn validate_token_format(token: &str) -> Result<()> {
-    if token.is_empty() {
-        return Err(crate::error::CommyError::AuthenticationFailed(
-            "Token cannot be empty".to_string(),
-        ));
-    }
-
-    if token.len() > 10000 {
-        return Err(crate::error::CommyError::AuthenticationFailed(
-            "Token is too long".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,12 +77,6 @@ mod tests {
         assert!(ctx.has_permission("read"));
         assert!(ctx.has_permission("write"));
         assert!(!ctx.has_permission("admin"));
-    }
-
-    #[test]
-    fn test_validate_token_format() {
-        assert!(validate_token_format("valid_token").is_ok());
-        assert!(validate_token_format("").is_err());
     }
 
     #[test]
@@ -155,22 +131,6 @@ mod tests {
     fn test_is_authenticated_to_different_tenant() {
         let ctx = AuthContext::new("my_tenant".to_string(), vec![]);
         assert!(!ctx.is_authenticated_to("other_tenant"));
-    }
-
-    #[test]
-    fn test_validate_token_too_long() {
-        let long_token = "x".repeat(10001);
-        assert!(validate_token_format(&long_token).is_err());
-    }
-
-    #[test]
-    fn test_validate_token_exactly_at_limit_is_ok() {
-        // 10000 chars is exactly the limit and should succeed (> 10000 fails)
-        let token = "a".repeat(10000);
-        assert!(
-            validate_token_format(&token).is_ok(),
-            "Token of exactly 10000 chars must be valid"
-        );
     }
 
     #[test]

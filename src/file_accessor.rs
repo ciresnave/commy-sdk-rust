@@ -51,11 +51,6 @@ impl LocalFileAccessor {
     pub fn path(&self) -> &PathBuf {
         &self.file_path
     }
-
-    /// Get direct reference to mapped memory (zero-copy)
-    pub fn as_slice(&self) -> &[u8] {
-        &self.mmap[..]
-    }
 }
 
 #[async_trait::async_trait]
@@ -114,18 +109,6 @@ impl RemoteFileAccessor {
             buffer: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         }
     }
-
-    /// Update the entire buffer
-    pub async fn update_buffer(&self, data: Vec<u8>) -> Result<()> {
-        let mut buf = self.buffer.write().await;
-        *buf = data;
-        Ok(())
-    }
-
-    /// Get reference to the buffer (for read access)
-    pub async fn get_buffer(&self) -> Vec<u8> {
-        self.buffer.read().await.clone()
-    }
 }
 
 #[async_trait::async_trait]
@@ -177,47 +160,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_remote_file_accessor() {
-        let accessor = RemoteFileAccessor::new();
-
-        // Update with data
-        accessor
-            .update_buffer(vec![1, 2, 3, 4, 5, 6, 7, 8])
-            .await
-            .unwrap();
-
-        // Read it back
-        let data = accessor.read_bytes(0, 4).await.unwrap();
-        assert_eq!(data, vec![1, 2, 3, 4]);
-
-        // Verify it's not local
-        assert!(!accessor.is_local());
-    }
-
-    #[tokio::test]
-    async fn test_remote_write_bytes() {
-        let accessor = RemoteFileAccessor::new();
-        accessor.update_buffer(vec![0; 8]).await.unwrap();
-
-        accessor.write_bytes(2, &[99, 88, 77]).await.unwrap();
-
-        let data = accessor.read_bytes(0, 8).await.unwrap();
-        assert_eq!(data, vec![0, 0, 99, 88, 77, 0, 0, 0]);
-    }
-
-    #[tokio::test]
     async fn test_remote_file_accessor_new_is_empty() {
         let accessor = RemoteFileAccessor::new();
         let size = accessor.file_size().await.unwrap();
         assert_eq!(size, 0);
-    }
-
-    #[tokio::test]
-    async fn test_remote_get_buffer() {
-        let accessor = RemoteFileAccessor::new();
-        accessor.update_buffer(vec![10, 20, 30]).await.unwrap();
-        let buf = accessor.get_buffer().await;
-        assert_eq!(buf, vec![10, 20, 30]);
     }
 
     #[tokio::test]
@@ -235,11 +181,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_remote_write_then_read_round_trips() {
+        let accessor = RemoteFileAccessor::new();
+        accessor.write_bytes(0, &[1, 2, 3, 4]).await.unwrap();
+        assert_eq!(accessor.read_bytes(1, 2).await.unwrap(), vec![2, 3]);
+        assert_eq!(accessor.file_size().await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_remote_write_beyond_end_zero_fills_the_gap() {
+        let accessor = RemoteFileAccessor::new();
+        accessor.write_bytes(4, &[9]).await.unwrap();
+        assert_eq!(
+            accessor.read_bytes(0, 5).await.unwrap(),
+            vec![0, 0, 0, 0, 9]
+        );
+    }
+
+    #[tokio::test]
     async fn test_remote_read_out_of_bounds_returns_error() {
         let accessor = RemoteFileAccessor::new();
-        accessor.update_buffer(vec![1, 2, 3]).await.unwrap();
-        let result = accessor.read_bytes(0, 100).await;
-        assert!(result.is_err());
+        accessor.write_bytes(0, &[1, 2]).await.unwrap();
+        assert!(accessor.read_bytes(1, 5).await.is_err());
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -266,16 +229,6 @@ mod tests {
         let accessor = LocalFileAccessor::new(path).await.unwrap();
         let size = accessor.file_size().await.unwrap();
         assert_eq!(size, 128);
-    }
-
-    #[tokio::test]
-    async fn test_local_accessor_as_slice() {
-        let content = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
-        let (_tmp, path) = make_tmp_file(8);
-        // Write known content
-        std::fs::write(&path, &content).unwrap();
-        let accessor = LocalFileAccessor::new(path).await.unwrap();
-        assert_eq!(accessor.as_slice(), &content[..]);
     }
 
     #[tokio::test]
@@ -332,25 +285,6 @@ mod tests {
         let (_tmp, path) = make_tmp_file(32);
         let accessor = LocalFileAccessor::new(path.clone()).await.unwrap();
         assert_eq!(accessor.path(), &std::path::PathBuf::from(&path));
-    }
-
-    #[tokio::test]
-    async fn test_remote_write_bytes_beyond_current_len_zero_fills_gap() {
-        // Start with an 4-byte buffer, then write 2 bytes at offset 8.
-        // The buffer should grow to 10 bytes with 0s in [4..8].
-        let accessor = RemoteFileAccessor::new();
-        accessor.update_buffer(vec![1, 2, 3, 4]).await.unwrap();
-
-        accessor.write_bytes(8, &[77, 88]).await.unwrap();
-
-        let buf = accessor.get_buffer().await;
-        assert_eq!(buf.len(), 10);
-        // Original bytes preserved
-        assert_eq!(&buf[0..4], &[1, 2, 3, 4]);
-        // Gap is zero-filled
-        assert_eq!(&buf[4..8], &[0, 0, 0, 0]);
-        // Written bytes are present
-        assert_eq!(&buf[8..10], &[77, 88]);
     }
 
     #[tokio::test]

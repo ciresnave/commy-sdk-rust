@@ -147,25 +147,6 @@ async fn test_watcher_new() {
 }
 ```
 
-#### Test: Temp File Creation
-```rust
-#[tokio::test]
-async fn test_create_temp_service_file() {
-    let path = create_temp_service_file("test_service").await.unwrap();
-    
-    assert!(path.exists());
-    assert!(path.to_string_lossy().contains("service_"));
-    
-    // On Unix, check permissions
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::metadata(&path).unwrap().permissions();
-        assert_eq!(perms.mode() & 0o777, 0o600);
-    }
-}
-```
-
 #### Test: File Change Detection
 ```rust
 #[tokio::test]
