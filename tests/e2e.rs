@@ -5,7 +5,7 @@
 //! development authentication on (the only way to authenticate today).
 
 use commy_sdk_rust::client::{RotationOutcome, SharedEvent};
-use commy_sdk_rust::{auth, Client};
+use commy_sdk_rust::{auth, Client, Session};
 use commy_wire::RotateReason;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -133,14 +133,13 @@ impl Server {
         Client::new(self.url.clone()).with_tls_root_pem(self.cert_pem.clone())
     }
 
-    /// A connected, authenticated client on `tenant`.
-    async fn session(&self, tenant: &str) -> Client {
+    /// A connected client authenticated to `tenant`.
+    async fn session(&self, tenant: &str) -> Session {
         let c = self.client();
         c.connect().await.expect("connect");
         c.authenticate(tenant, auth::api_key("dev".to_string()))
             .await
-            .expect("authenticate");
-        c
+            .expect("authenticate")
     }
 }
 
@@ -164,7 +163,7 @@ async fn remote_mode_two_clients_exchange_ranges() {
     let s = Server::start().await;
     let a = s.session("t_remote").await;
     let b = s.session("t_remote").await;
-    let svc = a.create_service("t_remote", "svc", 65536).await.unwrap();
+    let svc = a.create_service("svc", 65536).await.unwrap();
     let fa = a.open_remote(&svc).await.unwrap();
     let fb = b.open_remote(&svc).await.unwrap();
     assert_eq!(fa, fb, "one service, one file id");
@@ -188,7 +187,7 @@ async fn remote_mode_two_clients_exchange_ranges() {
 }
 
 /// Poll until the drain barrier opens for this client.
-async fn next_pending(c: &Client) -> commy_wire::RotationPending {
+async fn next_pending(c: &Session) -> commy_wire::RotationPending {
     for _ in 0..20 {
         if let SharedEvent::RotationPending(p) = c.poll_shared_events(WAIT).await.unwrap() {
             return p;
@@ -198,10 +197,10 @@ async fn next_pending(c: &Client) -> commy_wire::RotationPending {
 }
 
 /// Two remote clients on one service holding `b"old layout"` at offset 10.
-async fn rotation_rig(s: &Server, tenant: &str) -> (Arc<Client>, Arc<Client>, String) {
+async fn rotation_rig(s: &Server, tenant: &str) -> (Arc<Session>, Arc<Session>, String) {
     let a = Arc::new(s.session(tenant).await);
     let b = Arc::new(s.session(tenant).await);
-    let svc = a.create_service(tenant, "svc", 8192).await.unwrap();
+    let svc = a.create_service("svc", 8192).await.unwrap();
     a.open_remote(&svc).await.unwrap();
     b.open_remote(&svc).await.unwrap();
     a.shared_write(&svc, 10, b"old layout").await.unwrap();
@@ -296,7 +295,7 @@ async fn connect_authenticate_and_disconnect() {
         .authenticate("t_auth", auth::api_key("demo_key".to_string()))
         .await
         .expect("dev authentication accepts any credential");
-    assert_eq!(ctx.tenant_id, "t_auth");
+    assert_eq!(ctx.tenant_id(), "t_auth");
     assert_eq!(c.authenticated_tenants().await, vec!["t_auth".to_string()]);
     c.disconnect().await.expect("disconnect");
 }
@@ -305,18 +304,18 @@ async fn connect_authenticate_and_disconnect() {
 async fn service_lifecycle_and_heartbeat() {
     let s = Server::start().await;
     let c = s.session("t_life").await;
-    let id = c.create_service("t_life", "config", 4096).await.unwrap();
-    let svc = c.get_service("t_life", "config").await.unwrap();
+    let id = c.create_service("config", 4096).await.unwrap();
+    let svc = c.get_service("config").await.unwrap();
     assert_eq!(svc.id, id);
     assert!(
         matches!(
-            c.get_service("t_life", "missing").await,
+            c.get_service("missing").await,
             Err(commy_sdk_rust::CommyError::NotFound(_))
         ),
         "get_service must not create, and the legacy handler's CamelCase code must read as NotFound"
     );
-    c.heartbeat().await.unwrap();
-    c.disconnect().await.unwrap();
+    c.client().heartbeat().await.unwrap();
+    c.client().disconnect().await.unwrap();
 }
 
 #[tokio::test]
@@ -327,16 +326,15 @@ async fn several_clients_work_at_once() {
         let c = s.client();
         tasks.push(tokio::spawn(async move {
             c.connect().await.expect("connect");
-            c.authenticate(
-                format!("t_multi_{i}"),
-                auth::api_key("demo_key".to_string()),
-            )
-            .await
-            .expect("authenticate");
-            c.create_service(&format!("t_multi_{i}"), "svc", 4096)
+            let c = c
+                .authenticate(
+                    format!("t_multi_{i}"),
+                    auth::api_key("demo_key".to_string()),
+                )
                 .await
-                .expect("create_service");
-            c.disconnect().await.expect("disconnect");
+                .expect("authenticate");
+            c.create_service("svc", 4096).await.expect("create_service");
+            c.client().disconnect().await.expect("disconnect");
         }));
     }
     for t in tasks {
@@ -348,7 +346,7 @@ async fn several_clients_work_at_once() {
 async fn grants_can_be_made_listed_and_revoked() {
     let s = Server::start().await;
     let admin = s.session("t_grants").await;
-    let svc = admin.create_service("t_grants", "svc", 4096).await.unwrap();
+    let svc = admin.create_service("svc", 4096).await.unwrap();
 
     admin
         .grant("bob", Some(&svc), &["service:read", "service:write"])
@@ -384,12 +382,13 @@ async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revoca
     use commy_sdk_rust::CommyError;
     let s = Server::start().await;
     let admin = s.session("t_denied").await;
-    let svc = admin.create_service("t_denied", "svc", 4096).await.unwrap();
+    let svc = admin.create_service("svc", 4096).await.unwrap();
 
     // `bob` authenticates with no scopes: he holds nothing until an administrator grants it.
     let bob = s.client().with_dev_scopes(&[]);
     bob.connect().await.unwrap();
-    bob.authenticate("t_denied", auth::api_key("x".to_string()))
+    let bob = bob
+        .authenticate("t_denied", auth::api_key("x".to_string()))
         .await
         .unwrap();
     let denied = bob.open_remote(&svc).await.unwrap_err();
@@ -399,7 +398,7 @@ async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revoca
     );
 
     admin
-        .grant(bob.id(), Some(&svc), &["service:write"])
+        .grant(bob.client().id(), Some(&svc), &["service:write"])
         .await
         .unwrap();
     bob.open_remote(&svc).await.expect("allowed once granted");
@@ -407,7 +406,10 @@ async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revoca
     bob.flush_shared(&svc).await.unwrap();
 
     // Removing him from the service drops his mapping and moves the file.
-    admin.revoke(bob.id(), Some(&svc), &[]).await.unwrap();
+    admin
+        .revoke(bob.client().id(), Some(&svc), &[])
+        .await
+        .unwrap();
     let mut lost = false;
     for _ in 0..20 {
         if let SharedEvent::Loss(l) = bob.poll_shared_events(WAIT).await.unwrap() {
@@ -429,10 +431,10 @@ async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revoca
 }
 
 /// A tenant whose service `svc` is open to local mapping, and two admin sessions on it.
-async fn local_rig(s: &Server, tenant: &str) -> (Arc<Client>, Arc<Client>, String) {
+async fn local_rig(s: &Server, tenant: &str) -> (Arc<Session>, Arc<Session>, String) {
     let a = Arc::new(s.session(tenant).await);
     let b = Arc::new(s.session(tenant).await);
-    let svc = a.create_service(tenant, "svc", 8192).await.unwrap();
+    let svc = a.create_service("svc", 8192).await.unwrap();
     assert_eq!(
         a.open_shared(&svc).await.unwrap(),
         None,
@@ -547,10 +549,7 @@ async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
     use commy_sdk_rust::CommyError;
     let mut s = Server::start().await;
     let admin = s.session("t_restart").await;
-    let svc = admin
-        .create_service("t_restart", "svc", 4096)
-        .await
-        .unwrap();
+    let svc = admin.create_service("svc", 4096).await.unwrap();
     admin
         .grant(
             "bob-restart",
@@ -566,7 +565,8 @@ async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
     };
     let bob = bob_client(&s);
     bob.connect().await.unwrap();
-    bob.authenticate("t_restart", auth::api_key("x".to_string()))
+    let bob = bob
+        .authenticate("t_restart", auth::api_key("x".to_string()))
         .await
         .unwrap();
     bob.open_remote(&svc).await.expect("allowed by the grant");
@@ -577,7 +577,7 @@ async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
     // The same service id, and bob's grant is still there with no administrator acting.
     let admin = s.session("t_restart").await;
     assert_eq!(
-        admin.get_service("t_restart", "svc").await.unwrap().id,
+        admin.get_service("svc").await.unwrap().id,
         svc,
         "the registry is durable"
     );
@@ -585,7 +585,8 @@ async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
     assert_eq!(entries.len(), 1, "{entries:?}");
     let bob = bob_client(&s);
     bob.connect().await.unwrap();
-    bob.authenticate("t_restart", auth::api_key("x".to_string()))
+    let bob = bob
+        .authenticate("t_restart", auth::api_key("x".to_string()))
         .await
         .unwrap();
     bob.open_remote(&svc)
@@ -605,7 +606,8 @@ async fn services_and_grants_survive_a_server_restart_and_so_does_a_revoke() {
     s.restart().await;
     let bob = bob_client(&s);
     bob.connect().await.unwrap();
-    bob.authenticate("t_restart", auth::api_key("x".to_string()))
+    let bob = bob
+        .authenticate("t_restart", auth::api_key("x".to_string()))
         .await
         .unwrap();
     let denied = bob.open_remote(&svc).await.unwrap_err();

@@ -1,5 +1,29 @@
 # Hybrid SDK Migration Guide
 
+## 0.14 to 0.15.1 (breaking)
+
+0.15.0 was never published; 0.15.1 is the one release. Two breaking changes:
+
+1. **Named variables are gone.** `Client::read_variable`, `write_variable`, `subscribe`, `unsubscribe` and their messages
+   were removed (the commy server dropped them, Plan C6). Use the shared-file calls (`open_shared`, `shared_write`,
+   `shared_read`, `flush_shared`, `open_remote`).
+2. **`authenticate` returns a `Session`.** Every operation that needs a login is a method on `Session`, so calling one
+   without authenticating does not compile. The tenant is the session's, so it is no longer an argument.
+
+| 0.14 | 0.15.1 |
+|---|---|
+| `client.authenticate(t, creds).await?;` | `let session = client.authenticate(t, creds).await?;` |
+| `client.create_service(t, name, size)` | `session.create_service(name, size)` |
+| `client.get_service(t, name)` / `delete_service(t, name)` | `session.get_service(name)` / `session.delete_service(name)` |
+| `client.get_virtual_service_file(t, name)` | `session.get_virtual_service_file(name)` |
+| `client.open_shared(id)`, `shared_write`, `grant`, `request_rotation`, ... | the same call on `session` |
+| `client.create_tenant(id, name)` / `delete_tenant(id)` | `session.create_tenant(id, name)` / `session.delete_tenant(id)` |
+| `Client::initialize(url, t, creds)` returns `Client` | returns a `Session`; `session.client()` is the client |
+| `client.heartbeat()`, `disconnect()`, `is_connected()`, `connection_state()` | unchanged (on `Client`; `session.client()`) |
+
+A `Session` is `Clone` and shares the connection with its `Client`. It can outlive its authentication (connection lost,
+access revoked); those calls fail at run time with `ConnectionLost` or `PermissionDenied`.
+
 > **Removed in 0.15.0:** `Client::read_variable`, `write_variable`, `subscribe` and `unsubscribe`, and the
 > `ReadVariable`/`WriteVariable`/`AllocateVariable`/`DeallocateVariable`/`Subscribe`/`Unsubscribe` client messages and
 > `VariableData`/`VariableChanged` server messages, are gone: the commy server removed named variables (its Plan C6) and

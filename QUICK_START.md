@@ -1,5 +1,10 @@
 # Commy Rust SDK: Quick Start Guide
 
+> **0.15.1:** `Client::authenticate` returns a `Session`, and the operations that need a login moved onto it
+> (`session.create_service(name, size)`, `session.get_service(name)`, ... the tenant is the session's). Snippets
+> below were updated mechanically: `client.<op>(tenant, ...)` is now `session.<op>(...)`, with
+> `let session = client.authenticate(...).await?;` once after connecting. See `MIGRATION_GUIDE.md`.
+
 **TL;DR**: Connect to Commy, authenticate, and use explicit CRUD operations. The SDK handles everything—permission checking and error recovery.
 
 ## Installation
@@ -28,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Connected!");
     
     // Authenticate to a tenant
-    let auth_ctx = client.authenticate(
+    let session = client.authenticate(
         "my_tenant",
         auth::api_key("my_api_key".to_string())
     ).await?;
@@ -44,15 +49,15 @@ The SDK provides explicit CRUD methods with clear semantics:
 
 ```rust
 // CREATE: Explicitly create a service
-let service_id = client.create_service("my_tenant", "app_config", 65536).await?;
+let service_id = session.create_service("app_config", 65536).await?;
 println!("✓ Created service: {}", service_id);
 
 // READ: Safe read (no side effects, won't create)
-let service = client.get_service("my_tenant", "app_config").await?;
+let service = session.get_service("app_config").await?;
 println!("✓ Read service: {}", service.id);
 
 // DELETE: Explicitly delete a service
-client.delete_service("my_tenant", "app_config").await?;
+session.delete_service("app_config").await?;
 println!("✓ Deleted service");
 ```
 
@@ -63,11 +68,11 @@ Each operation returns specific errors:
 ```rust
 use commy_client::CommyError;
 
-match client.create_service("my_tenant", "config", 65536).await {
+match session.create_service("config", 65536).await {
     Ok(id) => println!("✓ Created: {}", id),
     Err(CommyError::AlreadyExists(_)) => {
         // Service already exists, get it instead
-        let svc = client.get_service("my_tenant", "config").await?;
+        let svc = session.get_service("config").await?;
         println!("✓ Service exists: {}", svc.id);
     }
     Err(CommyError::PermissionDenied(msg)) => {
@@ -88,21 +93,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new("wss://localhost:9000");
     client.connect().await?;
     
-    let _auth = client.authenticate(
+    let session = client.authenticate(
         "my_org",
         auth::api_key("admin_key".to_string())
     ).await?;
     println!("✓ Connected and authenticated!");
     
     // 2. CREATE: Create a new service
-    let service_id = match client.create_service("my_org", "user_config", 65536).await {
+    let service_id = match session.create_service("user_config", 65536).await {
         Ok(id) => {
             println!("✓ Created service: {}", id);
             id
         }
         Err(CommyError::AlreadyExists(_)) => {
             println!("⚠ Service already exists, getting it...");
-            let svc = client.get_service("my_org", "user_config").await?;
+            let svc = session.get_service("user_config").await?;
             svc.id
         }
         Err(e) => {
@@ -112,11 +117,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // 3. READ: Get service metadata
-    let service = client.get_service("my_org", "user_config").await?;
+    let service = session.get_service("user_config").await?;
     println!("✓ Read service: {} (ID: {})", service.name, service.id);
     
     // 4. DELETE: Remove the service
-    match client.delete_service("my_org", "user_config").await {
+    match session.delete_service("user_config").await {
         Ok(_) => println!("✓ Deleted service"),
         Err(CommyError::NotFound(_)) => println!("⚠ Service not found"),
         Err(e) => {
@@ -180,10 +185,10 @@ async fn ensure_service_exists(
     tenant: &str,
     service: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match client.create_service(tenant, service, 65536).await {
+    match session.create_service(service, 65536).await {
         Ok(id) => Ok(id),
         Err(CommyError::AlreadyExists(_)) => {
-            let svc = client.get_service(tenant, service).await?;
+            let svc = session.get_service(service).await?;
             Ok(svc.id)
         }
         Err(e) => Err(e.into()),
@@ -199,14 +204,14 @@ async fn get_or_create(
     tenant: &str,
     service: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match client.get_service(tenant, service).await {
+    match session.get_service(service).await {
         Ok(svc) => Ok(svc.id),
         Err(CommyError::NotFound(_)) => {
-            match client.create_service(tenant, service, 65536).await {
+            match session.create_service(service, 65536).await {
                 Ok(id) => Ok(id),
                 Err(CommyError::AlreadyExists(_)) => {
                     // Another client created it, retry read
-                    let svc = client.get_service(tenant, service).await?;
+                    let svc = session.get_service(service).await?;
                     Ok(svc.id)
                 }
                 Err(e) => Err(e.into()),
@@ -236,7 +241,7 @@ cargo run --bin commy_server -- --port 9000
 **Solution**: Check authentication credentials:
 
 ```rust
-let result = client.authenticate("tenant", auth::api_key("correct_key")).await?;
+let session = client.authenticate("tenant", auth::api_key("correct_key")).await?;
 ```
 
 ### Permission denied
@@ -254,7 +259,7 @@ let result = client.authenticate("tenant", auth::api_key("correct_key")).await?;
 ```rust
 let mut retries = 0;
 loop {
-    match client.create_service(tenant, svc, 65536).await {
+    match session.create_service(svc, 65536).await {
         Ok(id) => return Ok(id),
         Err(CommyError::Timeout) if retries < 3 => {
             retries += 1;
