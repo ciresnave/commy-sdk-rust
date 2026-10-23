@@ -4,6 +4,15 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.0]
+
+### Removed
+
+- **Breaking** (items CodeRipper's `reachability` rule found with no caller; see the `cr-reachability` row in `ROADMAP.md`):
+  `auth::validate_token_format`, `Connection::set_state`, `Connection::is_connected`, `watcher::create_temp_service_file`,
+  `message::ServiceMetadata`, `message::Permission`, `LocalFileAccessor::as_slice`, `RemoteFileAccessor::update_buffer` and
+  `RemoteFileAccessor::get_buffer`.
+
 ## [0.15.3]
 
 ### Added

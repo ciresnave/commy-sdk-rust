@@ -66,8 +66,7 @@ Limits that come with the trap (from `dirty-ranges`; its README has the per-OS c
   `file_accessor`, `watcher` and `virtual_file` are covered by unit tests only (CI on the three OSes above).
 * **The real wire against any server but Commy's own** is not exercised; the golden vectors of `commy-wire`
   (`tests/wire_vectors.rs`) run against the SDK's message types, with the documented exceptions listed in that file.
-* **Unix-only code paths** were once broken until CI first ran on Linux/macOS (`watcher::create_temp_service_file`,
-  fixed in 0.1.2). A Windows-only local run does not cover such paths; run Linux (Docker) as well.
+* **Unix-only code paths** were once broken until CI first ran on Linux/macOS (a temp-file helper in `watcher`, fixed in 0.1.2 and removed in 0.16.0). A Windows-only local run does not cover such paths; run Linux (Docker) as well.
 
 ## How to reproduce
 

@@ -316,16 +316,6 @@ pub enum AuthCredentials {
     Custom { data: Secret<serde_json::Value> },
 }
 
-/// Service metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceMetadata {
-    pub service_id: String,
-    pub service_name: String,
-    pub tenant_id: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub file_path: Option<String>,
-}
-
 /// Variable metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariableMetadata {
@@ -335,15 +325,6 @@ pub struct VariableMetadata {
     pub size: u64,
     pub version: u64,
     pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-/// Permission set
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum Permission {
-    Read,
-    Write,
-    Admin,
-    Execute,
 }
 
 impl From<&AuthCredentials> for commy_wire::Credentials {
@@ -860,52 +841,6 @@ mod tests {
                 assert_eq!(message, "Operation completed");
             }
             _ => panic!("Wrong variant after round-trip"),
-        }
-    }
-
-    #[test]
-    fn test_service_metadata_round_trip_with_and_without_file_path() {
-        // With file_path = Some
-        let with_path = ServiceMetadata {
-            service_id: "svc-1".to_string(),
-            service_name: "my_service".to_string(),
-            tenant_id: "tenant_a".to_string(),
-            created_at: chrono::DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            file_path: Some("/tmp/svc.mem".to_string()),
-        };
-        let json = serde_json::to_string(&with_path).unwrap();
-        let back: ServiceMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.service_id, "svc-1");
-        assert_eq!(back.file_path, Some("/tmp/svc.mem".to_string()));
-
-        // With file_path = None
-        let no_path = ServiceMetadata {
-            service_id: "svc-2".to_string(),
-            service_name: "remote_service".to_string(),
-            tenant_id: "tenant_b".to_string(),
-            created_at: chrono::Utc::now(),
-            file_path: None,
-        };
-        let json = serde_json::to_string(&no_path).unwrap();
-        let back: ServiceMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.service_id, "svc-2");
-        assert!(back.file_path.is_none());
-    }
-
-    #[test]
-    fn test_permission_enum_all_variants_round_trip() {
-        let variants = [
-            Permission::Read,
-            Permission::Write,
-            Permission::Admin,
-            Permission::Execute,
-        ];
-        for perm in &variants {
-            let json = serde_json::to_string(perm).unwrap();
-            let back: Permission = serde_json::from_str(&json).unwrap();
-            assert_eq!(&back, perm, "Permission round-trip failed for {:?}", perm);
         }
     }
 
