@@ -1,5 +1,11 @@
 # Hybrid Protocol Implementation Guide for Servers
 
+> **Removed in 0.15.0:** `Client::read_variable`, `write_variable`, `subscribe` and `unsubscribe`, and the
+> `ReadVariable`/`WriteVariable`/`AllocateVariable`/`DeallocateVariable`/`Subscribe`/`Unsubscribe` client messages and
+> `VariableData`/`VariableChanged` server messages, are gone: the commy server removed named variables (its Plan C6) and
+> answers them with an "unknown message type" error. Examples below that call them no longer apply; share bytes through
+> the shared-file API (`open_shared`, `shared_write`, `shared_read`, `flush_shared`, `open_remote`) instead.
+
 ## Overview
 
 The hybrid client SDK sends new protocol messages to coordinate local memory-mapped access. Servers should handle these messages to enable:

@@ -1,5 +1,11 @@
 # Commy Hybrid Client Architecture
 
+> **Removed in 0.15.0:** `Client::read_variable`, `write_variable`, `subscribe` and `unsubscribe`, and the
+> `ReadVariable`/`WriteVariable`/`AllocateVariable`/`DeallocateVariable`/`Subscribe`/`Unsubscribe` client messages and
+> `VariableData`/`VariableChanged` server messages, are gone: the commy server removed named variables (its Plan C6) and
+> answers them with an "unknown message type" error. Examples below that call them no longer apply; share bytes through
+> the shared-file API (`open_shared`, `shared_write`, `shared_read`, `flush_shared`, `open_remote`) instead.
+
 ## Overview
 
 The Commy Rust SDK now implements a **fully hybrid client model** that provides transparent abstraction over both local and remote variable file access. Application code never needs to know whether it's using:
