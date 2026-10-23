@@ -1,5 +1,11 @@
 # Hybrid SDK Migration Guide
 
+> **Removed in 0.15.0:** `Client::read_variable`, `write_variable`, `subscribe` and `unsubscribe`, and the
+> `ReadVariable`/`WriteVariable`/`AllocateVariable`/`DeallocateVariable`/`Subscribe`/`Unsubscribe` client messages and
+> `VariableData`/`VariableChanged` server messages, are gone: the commy server removed named variables (its Plan C6) and
+> answers them with an "unknown message type" error. Examples below that call them no longer apply; share bytes through
+> the shared-file API (`open_shared`, `shared_write`, `shared_read`, `flush_shared`, `open_remote`) instead.
+
 ## Overview
 
 The Commy Rust SDK has been extended with hybrid architecture support. **Old code still works** - this is a backwards-compatible enhancement. New code can optionally use the hybrid API for better performance and unified local/remote experience.

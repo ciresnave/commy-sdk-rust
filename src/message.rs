@@ -38,44 +38,6 @@ pub enum ClientMessage {
         service_name: String,
     },
 
-    /// Allocate a variable in a service
-    AllocateVariable {
-        service_id: String,
-        variable_name: String,
-        initial_data: Vec<u8>,
-    },
-
-    /// Read variable data
-    ReadVariable {
-        service_id: String,
-        variable_name: String,
-    },
-
-    /// Write variable data
-    WriteVariable {
-        service_id: String,
-        variable_name: String,
-        data: Vec<u8>,
-    },
-
-    /// Deallocate a variable
-    DeallocateVariable {
-        service_id: String,
-        variable_name: String,
-    },
-
-    /// Subscribe to variable changes
-    Subscribe {
-        service_id: String,
-        variable_name: String,
-    },
-
-    /// Unsubscribe from variable changes
-    Unsubscribe {
-        service_id: String,
-        variable_name: String,
-    },
-
     /// Heartbeat/keepalive
     Heartbeat { client_id: String },
 
@@ -160,22 +122,6 @@ pub enum ServerMessage {
         success: bool,
         tenant_id: String,
         message: String,
-    },
-
-    /// Variable data response
-    VariableData {
-        service_id: String,
-        variable_name: String,
-        data: Vec<u8>,
-        version: u64,
-    },
-
-    /// Variable change notification
-    VariableChanged {
-        service_id: String,
-        variable_name: String,
-        data: Vec<u8>,
-        version: u64,
     },
 
     /// Operation result
@@ -730,122 +676,6 @@ mod tests {
     }
 
     #[test]
-    fn test_client_message_allocate_variable_round_trip() {
-        let initial = vec![1u8, 2, 3, 4];
-        let msg = ClientMessage::AllocateVariable {
-            service_id: "svc1".to_string(),
-            variable_name: "counter".to_string(),
-            initial_data: initial.clone(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::AllocateVariable {
-                service_id,
-                variable_name,
-                initial_data,
-            } => {
-                assert_eq!(service_id, "svc1");
-                assert_eq!(variable_name, "counter");
-                assert_eq!(initial_data, initial);
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_client_message_read_variable_round_trip() {
-        let msg = ClientMessage::ReadVariable {
-            service_id: "svc1".to_string(),
-            variable_name: "counter".to_string(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::ReadVariable {
-                service_id,
-                variable_name,
-            } => {
-                assert_eq!(service_id, "svc1");
-                assert_eq!(variable_name, "counter");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_client_message_write_variable_round_trip() {
-        let data = vec![9u8, 8, 7];
-        let msg = ClientMessage::WriteVariable {
-            service_id: "svc2".to_string(),
-            variable_name: "temp".to_string(),
-            data: data.clone(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::WriteVariable {
-                service_id,
-                variable_name,
-                data: d,
-            } => {
-                assert_eq!(service_id, "svc2");
-                assert_eq!(variable_name, "temp");
-                assert_eq!(d, data);
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_client_message_deallocate_variable_round_trip() {
-        let msg = ClientMessage::DeallocateVariable {
-            service_id: "svc3".to_string(),
-            variable_name: "old_var".to_string(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::DeallocateVariable {
-                service_id,
-                variable_name,
-            } => {
-                assert_eq!(service_id, "svc3");
-                assert_eq!(variable_name, "old_var");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_client_message_subscribe_round_trip() {
-        let msg = ClientMessage::Subscribe {
-            service_id: "svc4".to_string(),
-            variable_name: "level".to_string(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::Subscribe {
-                service_id,
-                variable_name,
-            } => {
-                assert_eq!(service_id, "svc4");
-                assert_eq!(variable_name, "level");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_client_message_unsubscribe_round_trip() {
-        let msg = ClientMessage::Unsubscribe {
-            service_id: "svc5".to_string(),
-            variable_name: "level".to_string(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::Unsubscribe {
-                service_id,
-                variable_name,
-            } => {
-                assert_eq!(service_id, "svc5");
-                assert_eq!(variable_name, "level");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
     fn test_client_message_disconnect_round_trip() {
         let msg = ClientMessage::Disconnect {
             client_id: "cli_99".to_string(),
@@ -942,56 +772,6 @@ mod tests {
                 assert!(success);
                 assert_eq!(tenant_id, "t2");
                 assert_eq!(message, "Tenant created");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_server_message_variable_data_round_trip() {
-        let data = vec![5u8, 6, 7, 8];
-        let msg = ServerMessage::VariableData {
-            service_id: "svc1".to_string(),
-            variable_name: "x".to_string(),
-            data: data.clone(),
-            version: 42,
-        };
-        match round_trip_server(msg) {
-            ServerMessage::VariableData {
-                service_id,
-                variable_name,
-                data: d,
-                version,
-            } => {
-                assert_eq!(service_id, "svc1");
-                assert_eq!(variable_name, "x");
-                assert_eq!(d, data);
-                assert_eq!(version, 42);
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_server_message_variable_changed_round_trip() {
-        let data = vec![11u8, 22];
-        let msg = ServerMessage::VariableChanged {
-            service_id: "svc2".to_string(),
-            variable_name: "y".to_string(),
-            data: data.clone(),
-            version: 7,
-        };
-        match round_trip_server(msg) {
-            ServerMessage::VariableChanged {
-                service_id,
-                variable_name,
-                data: d,
-                version,
-            } => {
-                assert_eq!(service_id, "svc2");
-                assert_eq!(variable_name, "y");
-                assert_eq!(d, data);
-                assert_eq!(version, 7);
             }
             _ => panic!("Wrong variant"),
         }
