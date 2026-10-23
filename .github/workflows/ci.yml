@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ciresnave/commy
-          ref: bcbf96179c8e815d0d5c676d33f705d8dd43ff73 # commy 0.19.0
+          ref: 2f69f802839b267142bd16bb9518edb86ca2ef53 # commy 0.21.0
           path: commy
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
@@ -113,3 +113,10 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check advisories licenses bans sources
+
+  # Advisory: the portfolio CodeRipper sweep. Not a required check; findings are triaged into ROADMAP.md rows, never silenced here.
+  portfolio:
+    name: portfolio (CodeRipper, advisory)
+    permissions:
+      contents: read
+    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@c665210ad0972cf3ddb7bc81bdd7800c3248a938
