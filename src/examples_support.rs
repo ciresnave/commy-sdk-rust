@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Server setup infrastructure for examples
 //
 // This module handles downloading, configuring, and starting a Commy server

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Main Commy client for connecting to servers
 
 use crate::auth::{AuthContext, AuthCredentials};
@@ -108,7 +109,10 @@ pub struct Client {
 
     /// Heartbeat interval
     // The background heartbeat task is disabled (see the TODO in `_connect_impl`).
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "read only by the disabled background heartbeat task"
+    )]
     heartbeat_interval: Duration,
 
     /// Maximum reconnection attempts
@@ -133,7 +137,10 @@ pub struct Client {
     shared: Arc<RwLock<std::collections::HashMap<String, SharedFile>>>,
 
     /// Background heartbeat task handle
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "set only by the disabled background heartbeat task"
+    )]
     heartbeat_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -1644,7 +1651,10 @@ impl Client {
     }
 
     /// Start background heartbeat task
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the heartbeat task is disabled (see the TODO in `_connect_impl`)"
+    )]
     async fn start_heartbeat_task(&self) {
         // Stop existing heartbeat task if any
         let mut task_guard = self.heartbeat_task.write().await;

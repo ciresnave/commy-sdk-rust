@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Message types for Commy client protocol
 
 use serde::{Deserialize, Serialize};

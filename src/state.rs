@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Client state management
 
 use crate::auth::AuthContext;

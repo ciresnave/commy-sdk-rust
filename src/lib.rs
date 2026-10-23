@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Commy Rust Client SDK
 //!
 //! A high-level Rust client for interacting with the Commy shared memory coordination system.

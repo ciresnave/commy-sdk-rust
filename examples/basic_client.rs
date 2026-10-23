@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Basic example showing how to connect, authenticate, and use Commy
 //!
 //! This example is completely self-contained:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #[cfg(test)]
 mod tenant_crud_tests {
     use serde_json::json;

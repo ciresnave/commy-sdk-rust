@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! End-to-end: the SDK against a real Commy server over WSS with a real self-signed certificate.
 //!
 //! Built only with `--features e2e`; `COMMY_BIN` must name a built `commy` binary (CI builds one from

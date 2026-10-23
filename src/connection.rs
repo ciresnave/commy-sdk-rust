@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! WebSocket connection management
 
 use crate::error::{CommyError, Result};

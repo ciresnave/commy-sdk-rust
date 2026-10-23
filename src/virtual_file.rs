@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Virtual variable file abstraction
 //!
 //! Provides a unified interface for accessing variables from either:
