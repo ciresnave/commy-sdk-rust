@@ -62,31 +62,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize client (all prerequisites bundled in one call)
     println!("  ├─ Connecting and authenticating...");
-    let client = match Client::initialize(
+    let session = match Client::initialize(
         &server_url,
         "my_tenant",
         auth::api_key("test_key_123".to_string()),
     )
     .await
     {
-        Ok(c) => {
+        Ok(s) => {
             println!("  ├─ ✅ Initialized");
-            c
+            s
         }
         Err(e) => {
             println!("  ├─ ⚠️  ({})", e);
-            let client = Client::new(&server_url);
-            println!("  └─ ℹ️  Continuing with basic client");
-            client
+            println!("  └─ ℹ️  Could not authenticate; nothing more to demonstrate");
+            return Ok(());
         }
     };
+    let client = session.client();
 
     println!("  └─ Client ID: {}\n", client.id());
 
     // Get virtual service file
     // This creates an abstraction that works for both local and remote
     println!("🔍 Getting virtual service file\n");
-    let vf = match client.get_virtual_service_file("my_tenant", "config").await {
+    let vf = match session.get_virtual_service_file("config").await {
         Ok(vf) => {
             println!("✅ Got virtual service file for: {}\n", vf.service_name());
             vf

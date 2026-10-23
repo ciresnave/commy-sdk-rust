@@ -66,16 +66,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Authenticating with admin key... ");
     io::stdout().flush()?;
 
-    match admin
+    let admin_session = admin
         .authenticate(
             "my_tenant",
             auth::api_key("admin_key_with_all_perms".to_string()),
         )
-        .await
-    {
-        Ok(_) => println!("✅"),
-        Err(e) => println!("⚠️  ({})", e),
-    }
+        .await?;
+    println!("✅");
 
     println!("  ├─ Can create services");
     println!("  ├─ Can read services");
@@ -85,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Creating service... ");
     io::stdout().flush()?;
 
-    match admin.create_service("my_tenant", "app_state", 65536).await {
+    match admin_session.create_service("app_state", 65536).await {
         Ok(id) => println!("✅ (ID: {})", id),
         Err(CommyError::AlreadyExists(_)) => println!("ℹ️  (already exists)"),
         Err(e) => println!("⚠️  ({})", e),
@@ -110,13 +107,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Authenticating with read-only key... ");
     io::stdout().flush()?;
 
-    match reader
+    let reader_session = reader
         .authenticate("my_tenant", auth::api_key("read_only_key".to_string()))
-        .await
-    {
-        Ok(_) => println!("✅"),
-        Err(e) => println!("⚠️  ({})", e),
-    }
+        .await?;
+    println!("✅");
 
     println!("  ├─ Cannot create services");
     println!("  ├─ Can read services");
@@ -126,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Reading service... ");
     io::stdout().flush()?;
 
-    match reader.get_service("my_tenant", "app_state").await {
+    match reader_session.get_service("app_state").await {
         Ok(service) => println!("✅ (ID: {})", service.id),
         Err(CommyError::NotFound(_)) => println!("ℹ️  (not found)"),
         Err(e) => println!("⚠️  ({})", e),
@@ -136,10 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Attempting to create service... ");
     io::stdout().flush()?;
 
-    match reader
-        .create_service("my_tenant", "new_service", 65536)
-        .await
-    {
+    match reader_session.create_service("new_service", 65536).await {
         Ok(_) => println!("❌ Unexpectedly succeeded!"),
         Err(CommyError::Unauthorized(_)) => println!("✅ Permission denied"),
         Err(CommyError::PermissionDenied(_)) => println!("✅ Permission denied"),
@@ -150,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Attempting to delete service... ");
     io::stdout().flush()?;
 
-    match reader.delete_service("my_tenant", "app_state").await {
+    match reader_session.delete_service("app_state").await {
         Ok(_) => println!("❌ Unexpectedly succeeded!"),
         Err(CommyError::Unauthorized(_)) => println!("✅ Permission denied"),
         Err(CommyError::PermissionDenied(_)) => println!("✅ Permission denied"),
@@ -176,13 +167,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Authenticating with creator key... ");
     io::stdout().flush()?;
 
-    match creator
+    let creator_session = creator
         .authenticate("my_tenant", auth::api_key("creator_key".to_string()))
-        .await
-    {
-        Ok(_) => println!("✅"),
-        Err(e) => println!("⚠️  ({})", e),
-    }
+        .await?;
+    println!("✅");
 
     println!("  ├─ Can create services");
     println!("  ├─ Can read services");
@@ -192,10 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Creating service... ");
     io::stdout().flush()?;
 
-    match creator
-        .create_service("my_tenant", "user_cache", 65536)
-        .await
-    {
+    match creator_session.create_service("user_cache", 65536).await {
         Ok(id) => println!("✅ (ID: {})", id),
         Err(CommyError::AlreadyExists(_)) => println!("ℹ️  (already exists)"),
         Err(e) => println!("⚠️  ({})", e),
@@ -205,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Reading service... ");
     io::stdout().flush()?;
 
-    match creator.get_service("my_tenant", "user_cache").await {
+    match creator_session.get_service("user_cache").await {
         Ok(service) => println!("✅ (ID: {})", service.id),
         Err(e) => println!("⚠️  ({})", e),
     }
@@ -214,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  Attempting to delete service... ");
     io::stdout().flush()?;
 
-    match creator.delete_service("my_tenant", "user_cache").await {
+    match creator_session.delete_service("user_cache").await {
         Ok(_) => println!("❌ Unexpectedly succeeded!"),
         Err(CommyError::PermissionDenied(_)) => println!("✅ Permission denied"),
         Err(CommyError::Unauthorized(_)) => println!("✅ Permission denied"),

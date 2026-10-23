@@ -1,5 +1,10 @@
 # Commy SDK Rust Examples
 
+> **0.15.1:** `Client::authenticate` returns a `Session`, and the operations that need a login moved onto it
+> (`session.create_service(name, size)`, `session.get_service(name)`, ... the tenant is the session's). Snippets
+> below were updated mechanically: `client.<op>(tenant, ...)` is now `session.<op>(...)`, with
+> `let session = client.authenticate(...).await?;` once after connecting. See `MIGRATION_GUIDE.md`.
+
 This directory contains fully functional, self-contained examples demonstrating key features of the Commy SDK. Each example automatically manages its own Commy server instance, making them perfect for learning and testing.
 
 ## Quick Start
@@ -123,7 +128,7 @@ let client = Client::new(server.url());
 client.connect().await?;
 
 // 3. Use the client
-client.authenticate("tenant", auth::api_key("key".to_string())).await?;
+let session = client.authenticate("tenant", auth::api_key("key".to_string())).await?;
 // ... perform operations ...
 
 // 4. Cleanup happens automatically

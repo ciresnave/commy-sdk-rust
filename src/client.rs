@@ -6,6 +6,7 @@ use crate::error::{CommyError, Result};
 use crate::local_map::{LocalMap, LocalMapOutcome, NegotiatedFile};
 use crate::message::{ClientMessage, ServerMessage};
 use crate::service::Service;
+use crate::session::Session;
 use crate::shared_file::SharedFile;
 use crate::state::{create_shared_state, SharedState};
 use crate::virtual_file::VirtualVariableFile;
@@ -16,18 +17,18 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-/// Something that happened to a mapped service, as seen by [`Client::poll_shared_events`].
+/// Something that happened to a mapped service, as seen by [`Session::poll_shared_events`].
 #[derive(Debug)]
 pub enum SharedEvent {
     /// Nothing relevant arrived in time.
     None,
     /// Another writer's changes were applied (ranges re-baselined or frames written).
     Updated,
-    /// A resize drain barrier opened: call [`Client::drain_for_rotation`].
+    /// A resize drain barrier opened: call [`Session::drain_for_rotation`].
     RotationPending(commy_wire::RotationPending),
-    /// Requester only: the new file is ready to fill (seen outside [`Client::drain_for_rotation`]).
+    /// Requester only: the new file is ready to fill (seen outside [`Session::drain_for_rotation`]).
     RotationPrepared(commy_wire::RotationPrepared),
-    /// The new file is live: call [`Client::complete_rotation`].
+    /// The new file is live: call [`Session::complete_rotation`].
     RotationCommit(commy_wire::RotationCommit),
     /// The rotation was abandoned: the old file stays live and writers may resume on it.
     RotationAborted(commy_wire::RotationAborted),
@@ -43,7 +44,7 @@ pub enum RotationOutcome {
     Committed(commy_wire::RotationCommit),
     /// The rotation was abandoned; the old file is still mapped and writable.
     Aborted(commy_wire::RotationAborted),
-    /// Requester only: fill the new file ([`Client::begin_fill`]) and finish or abort.
+    /// Requester only: fill the new file ([`Session::begin_fill`]) and finish or abort.
     Prepared(commy_wire::RotationPrepared),
 }
 
@@ -91,6 +92,7 @@ const ROTATION_COMMIT_GRACE: Duration = Duration::from_secs(5);
 const MAX_REMOTE_FILE_BYTES: usize = 1 << 30;
 
 /// Main Commy client for interacting with a Commy server
+#[derive(Clone)]
 pub struct Client {
     /// Unique client identifier
     client_id: String,
@@ -145,20 +147,21 @@ impl Client {
     /// 4. Initializes the file watcher
     /// 5. Starts file monitoring
     ///
-    /// After this, the client is ready to use with `get_virtual_service_file()`.
+    /// Returns the [`Session`] for the tenant (its [`Session::client`] is the client). After this
+    /// the session is ready to use with `get_virtual_service_file()`.
     pub async fn initialize(
         server_url: impl Into<String>,
         tenant_id: impl Into<String>,
         credentials: AuthCredentials,
-    ) -> Result<Self> {
+    ) -> Result<Session> {
         let client = Self::_new(server_url);
         client._connect_impl().await?;
-        client
+        let auth = client
             ._authenticate_impl(&tenant_id.into(), credentials)
             .await?;
         client._init_file_watcher_impl().await?;
         client._start_file_monitoring_impl().await?;
-        Ok(client)
+        Ok(Session::new(client, auth))
     }
 
     /// Create a new client (internal)
@@ -340,8 +343,22 @@ impl Client {
         }
     }
 
-    /// Authenticate to a tenant (public - for testing/special cases)
+    /// Authenticate to a tenant and return the [`Session`] for it.
+    ///
+    /// Every operation that needs an authenticated connection is a method on the returned
+    /// session. Authenticating again (another tenant, or the same one) returns another session on
+    /// the same connection.
     pub async fn authenticate(
+        &self,
+        tenant_id: impl Into<String>,
+        credentials: AuthCredentials,
+    ) -> Result<Session> {
+        let auth = self.authenticate_context(tenant_id, credentials).await?;
+        Ok(Session::new(self.clone(), auth))
+    }
+
+    /// Authenticate and return the raw [`AuthContext`] (no session).
+    pub(crate) async fn authenticate_context(
         &self,
         tenant_id: impl Into<String>,
         credentials: AuthCredentials,
@@ -356,7 +373,7 @@ impl Client {
     /// - Not authenticated to the tenant
     /// - Service already exists
     /// - Insufficient permissions (need create_service permission)
-    pub async fn create_service(
+    pub(crate) async fn create_service(
         &self,
         tenant_id: &str,
         service_name: &str,
@@ -401,7 +418,7 @@ impl Client {
     /// - Not authenticated to the tenant
     /// - Service does not exist (NotFound error)
     /// - Insufficient permissions (need read_service permission)
-    pub async fn get_service(&self, tenant_id: &str, service_name: &str) -> Result<Service> {
+    pub(crate) async fn get_service(&self, tenant_id: &str, service_name: &str) -> Result<Service> {
         // Check if authenticated to this tenant
         let state = self.state.read().await;
         if !state.is_authenticated_to(tenant_id) {
@@ -448,7 +465,7 @@ impl Client {
     /// - Not authenticated to the tenant
     /// - Service does not exist
     /// - Insufficient permissions (need delete_service permission, typically admin)
-    pub async fn delete_service(&self, tenant_id: &str, service_name: &str) -> Result<()> {
+    pub(crate) async fn delete_service(&self, tenant_id: &str, service_name: &str) -> Result<()> {
         // Check if authenticated to this tenant
         let state = self.state.read().await;
         if !state.is_authenticated_to(tenant_id) {
@@ -495,7 +512,7 @@ impl Client {
     /// - Not connected to server
     /// - Tenant already exists
     /// - Insufficient permissions (need admin role)
-    pub async fn create_tenant(&self, tenant_id: &str, tenant_name: &str) -> Result<String> {
+    pub(crate) async fn create_tenant(&self, tenant_id: &str, tenant_name: &str) -> Result<String> {
         self.require_session().await?;
 
         // Request tenant creation
@@ -539,7 +556,7 @@ impl Client {
     /// - Tenant does not exist
     /// - Insufficient permissions (need admin role)
     /// - Tenant has active clients
-    pub async fn delete_tenant(&self, tenant_id: &str) -> Result<()> {
+    pub(crate) async fn delete_tenant(&self, tenant_id: &str) -> Result<()> {
         self.require_session().await?;
 
         // Request tenant deletion
@@ -706,7 +723,7 @@ impl Client {
     /// file, bad nonce file, no ack) returns `local: None`: the caller stays on WSS ranges.
     ///
     /// While waiting, messages that do not carry this call's `request_id` are discarded.
-    pub async fn negotiate_local(&self, service_id: &str) -> Result<NegotiatedFile> {
+    pub(crate) async fn negotiate_local(&self, service_id: &str) -> Result<NegotiatedFile> {
         self.negotiate_local_with_timeout(service_id, Duration::from_secs(10), true)
             .await
     }
@@ -808,7 +825,7 @@ impl Client {
     /// Map `service_id` locally when the server offers it (see [`Client::negotiate_local`]) and
     /// start tracking it in scan mode. Returns the file id when local mode is active, `None` when
     /// the service stays on WSS ranges.
-    pub async fn open_shared(&self, service_id: &str) -> Result<Option<u32>> {
+    pub(crate) async fn open_shared(&self, service_id: &str) -> Result<Option<u32>> {
         let negotiated = self.negotiate_local(service_id).await?;
         let Some(map) = negotiated.local else {
             return Ok(None);
@@ -827,7 +844,11 @@ impl Client {
     /// # Safety
     /// While armed, no thread may block `SIGSEGV`/`SIGBUS` while writing the mapping (Unix), and
     /// nothing may read from the OS into it.
-    pub async unsafe fn arm_shared_trap(&self, service_id: &str, pool_pages: usize) -> Result<()> {
+    pub(crate) async unsafe fn arm_shared_trap(
+        &self,
+        service_id: &str,
+        pool_pages: usize,
+    ) -> Result<()> {
         let mut shared = self.shared.write().await;
         let file = shared.get_mut(service_id).ok_or_else(|| {
             CommyError::NotFound(format!("service {service_id} is not mapped locally"))
@@ -838,7 +859,12 @@ impl Client {
     }
 
     /// Write into a locally mapped service. Nothing is sent until [`Client::flush_shared`].
-    pub async fn shared_write(&self, service_id: &str, offset: u64, bytes: &[u8]) -> Result<()> {
+    pub(crate) async fn shared_write(
+        &self,
+        service_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<()> {
         let mut shared = self.shared.write().await;
         let file = shared.get_mut(service_id).ok_or_else(|| {
             CommyError::NotFound(format!("service {service_id} is not mapped locally"))
@@ -854,7 +880,12 @@ impl Client {
     }
 
     /// Copy `len` bytes at `offset` out of a mapped or remote-mirrored service.
-    pub async fn shared_read(&self, service_id: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
+    pub(crate) async fn shared_read(
+        &self,
+        service_id: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Vec<u8>> {
         let shared = self.shared.read().await;
         let file = shared
             .get(service_id)
@@ -870,7 +901,7 @@ impl Client {
 
     /// Report what changed in a locally mapped service to the server, one `RangesChanged` per
     /// batch of up to 1024 ranges, each answered by a `FlushAck`. Returns the highest `seq` seen.
-    pub async fn flush_shared(&self, service_id: &str) -> Result<u64> {
+    pub(crate) async fn flush_shared(&self, service_id: &str) -> Result<u64> {
         self.flush_shared_with_timeout(service_id, Duration::from_secs(10))
             .await
     }
@@ -976,7 +1007,7 @@ impl Client {
     /// Remote mode: fetch the whole file with `Resync` and keep a private copy that range frames
     /// keep current. Use when [`Client::open_shared`] returns `None` (no local mapping offered).
     /// Returns the file id.
-    pub async fn open_remote(&self, service_id: &str) -> Result<u32> {
+    pub(crate) async fn open_remote(&self, service_id: &str) -> Result<u32> {
         self.open_remote_with_timeout(service_id, Duration::from_secs(10))
             .await
     }
@@ -1051,7 +1082,7 @@ impl Client {
     /// a mapped service, apply it so it is not reported as a local change. Returns `true` when an
     /// update was applied. Other messages are discarded; use [`Client::poll_shared_events`] to see
     /// rotation and loss events.
-    pub async fn poll_shared_updates(&self, wait: Duration) -> Result<bool> {
+    pub(crate) async fn poll_shared_updates(&self, wait: Duration) -> Result<bool> {
         Ok(matches!(
             self.poll_shared_events(wait).await?,
             SharedEvent::Updated
@@ -1059,7 +1090,7 @@ impl Client {
     }
 
     /// Like [`Client::poll_shared_updates`], but also reports rotation and loss events.
-    pub async fn poll_shared_events(&self, wait: Duration) -> Result<SharedEvent> {
+    pub(crate) async fn poll_shared_events(&self, wait: Duration) -> Result<SharedEvent> {
         let guard = self.connection.read().await;
         let Some(conn) = guard.as_ref() else {
             return Err(CommyError::ConnectionLost(
@@ -1120,7 +1151,7 @@ impl Client {
 
     /// Give `client_id` permissions (`tenant:read|write|admin`, `service:read|write|admin|resize`),
     /// tenant-wide or, with `service_id`, on that service. The caller needs admin rights there.
-    pub async fn grant(
+    pub(crate) async fn grant(
         &self,
         client_id: &str,
         service_id: Option<&str>,
@@ -1143,7 +1174,7 @@ impl Client {
     /// Take `permissions` from `client_id`. With `service_id` and no permissions, the client is
     /// removed from that service: it gets `Loss{REVOKED}` and the file rotates (see
     /// [`Client::complete_rotation`]).
-    pub async fn revoke(
+    pub(crate) async fn revoke(
         &self,
         client_id: &str,
         service_id: Option<&str>,
@@ -1164,7 +1195,7 @@ impl Client {
     }
 
     /// List grants, optionally only those of one client and/or one service.
-    pub async fn list_grants(
+    pub(crate) async fn list_grants(
         &self,
         client_id: Option<&str>,
         service_id: Option<&str>,
@@ -1185,7 +1216,7 @@ impl Client {
     /// an administrator opens it, [`Client::open_shared`] gets no path and stays on WSS ranges.
     /// Needs `service:admin` on the service. Closing stops future offers; existing mappings end at
     /// the next rotation. Returns the state the server confirms.
-    pub async fn set_local_mapping(&self, service_id: &str, enabled: bool) -> Result<bool> {
+    pub(crate) async fn set_local_mapping(&self, service_id: &str, enabled: bool) -> Result<bool> {
         let id = Uuid::new_v4().to_string();
         let msg = ClientMessage::SetLocalMapping(commy_wire::SetLocalMapping {
             request_id: id.clone(),
@@ -1244,7 +1275,7 @@ impl Client {
     /// Ask the server to replace a service's file. Returns the rotation id. A resize also needs
     /// the other SDKs to drain; this client then sees `RotationPending` / `RotationCommit` like the
     /// others.
-    pub async fn request_rotation(
+    pub(crate) async fn request_rotation(
         &self,
         service_id: &str,
         reason: commy_wire::RotateReason,
@@ -1298,7 +1329,7 @@ impl Client {
     /// resume on the old file), or, for the requester only, `Prepared`: fill the new file with
     /// [`Client::begin_fill`] and finish with [`Client::finish_fill`]. Writers get an error until the
     /// end; old-offset writes are never replayed into the new layout.
-    pub async fn drain_for_rotation(
+    pub(crate) async fn drain_for_rotation(
         &self,
         p: &commy_wire::RotationPending,
     ) -> Result<RotationOutcome> {
@@ -1444,7 +1475,7 @@ impl Client {
     /// Requester: get the prepared file ready to fill. With a `path` (same machine) the file is
     /// mapped directly; without one the new bytes are buffered and sent as range frames by
     /// [`Client::finish_fill`]. Read the old layout with [`Client::shared_read`].
-    pub fn begin_fill(
+    pub(crate) fn begin_fill(
         &self,
         pending: &commy_wire::RotationPending,
         prepared: &commy_wire::RotationPrepared,
@@ -1476,7 +1507,7 @@ impl Client {
 
     /// Requester: the new file is filled. Send it (remote), say `RotationFilled`, and wait for the
     /// end of the rotation: `Committed` (switched) or `Aborted` (the old file stays).
-    pub async fn finish_fill(&self, fill: RotationFill) -> Result<RotationOutcome> {
+    pub(crate) async fn finish_fill(&self, fill: RotationFill) -> Result<RotationOutcome> {
         let fill_wait = Duration::from_millis(fill.fill_ms);
         let bound = tokio::time::Instant::now() + fill_wait + ROTATION_COMMIT_GRACE;
         let RotationFill {
@@ -1529,7 +1560,7 @@ impl Client {
     }
 
     /// Requester: give up. The server keeps the old file and sends `RotationAborted` to everyone.
-    pub async fn abort_fill(&self, fill: RotationFill) -> Result<RotationOutcome> {
+    pub(crate) async fn abort_fill(&self, fill: RotationFill) -> Result<RotationOutcome> {
         let bound = tokio::time::Instant::now()
             + Duration::from_millis(fill.fill_ms)
             + ROTATION_COMMIT_GRACE;
@@ -1559,7 +1590,7 @@ impl Client {
     /// `Resync` when no mapping is offered). After a revocation, unflushed local writes are
     /// written into the new file and flushed; after a resize they are never replayed. A commit
     /// that names the already-mapped file as its new file is a duplicate and ignored.
-    pub async fn complete_rotation(&self, c: &commy_wire::RotationCommit) -> Result<()> {
+    pub(crate) async fn complete_rotation(&self, c: &commy_wire::RotationCommit) -> Result<()> {
         let (was_local, pending) = {
             let mut shared = self.shared.write().await;
             let Some(file) = shared.get_mut(&c.service_id) else {
@@ -1670,7 +1701,7 @@ impl Client {
     }
 
     /// Initialize file watcher for hybrid mode (public - for testing/special cases)
-    pub async fn init_file_watcher(&self) -> Result<()> {
+    pub(crate) async fn init_file_watcher(&self) -> Result<()> {
         self._init_file_watcher_impl().await
     }
 
@@ -1679,7 +1710,7 @@ impl Client {
     /// This creates a virtual representation that works seamlessly for both:
     /// - Local clients: Memory-mapped to actual service file
     /// - Remote clients: In-memory buffer synced via WSS
-    pub async fn get_virtual_service_file(
+    pub(crate) async fn get_virtual_service_file(
         &self,
         tenant_id: &str,
         service_name: &str,
@@ -1735,12 +1766,14 @@ impl Client {
     ///
     /// This spawns a background task that watches for file changes
     /// and automatically detects which variables have changed using SIMD
-    pub async fn start_file_monitoring(&self) -> Result<()> {
+    pub(crate) async fn start_file_monitoring(&self) -> Result<()> {
         self._start_file_monitoring_impl().await
     }
 
     /// Get next file change event (blocks until a file changes)
-    pub async fn wait_for_file_change(&self) -> Result<Option<crate::watcher::FileChangeEvent>> {
+    pub(crate) async fn wait_for_file_change(
+        &self,
+    ) -> Result<Option<crate::watcher::FileChangeEvent>> {
         let watcher = self.file_watcher.read().await;
         if let Some(w) = watcher.as_ref() {
             Ok(w.next_change().await)
@@ -1752,7 +1785,9 @@ impl Client {
     }
 
     /// Try to get next file change event (non-blocking)
-    pub async fn try_get_file_change(&self) -> Result<Option<crate::watcher::FileChangeEvent>> {
+    pub(crate) async fn try_get_file_change(
+        &self,
+    ) -> Result<Option<crate::watcher::FileChangeEvent>> {
         let watcher = self.file_watcher.read().await;
         if let Some(w) = watcher.as_ref() {
             Ok(w.try_next_change().await)
@@ -1764,7 +1799,7 @@ impl Client {
     }
 
     /// Stop file monitoring
-    pub async fn stop_file_monitoring(&self) -> Result<()> {
+    pub(crate) async fn stop_file_monitoring(&self) -> Result<()> {
         if let Some(watcher) = self.file_watcher.write().await.take() {
             watcher.stop_watching().await?;
         }

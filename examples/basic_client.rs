@@ -72,19 +72,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Authenticating with API key... ");
     io::stdout().flush()?;
 
-    match client
+    let session = client
         .authenticate("my_tenant", auth::api_key("test_key_123".to_string()))
-        .await
-    {
-        Ok(auth_ctx) => {
-            println!("✅");
-            println!("  │  └─ Permissions: {:?}", auth_ctx.permissions);
-        }
-        Err(e) => {
-            println!("⚠️  ({})", e);
-            println!("  │  └─ Note: This is normal if server has no tenant config");
-        }
-    }
+        .await?;
+    println!("✅");
+    println!(
+        "  │  └─ Permissions: {:?}",
+        session.auth_context().permissions
+    );
 
     println!("  └─ Connected!\n");
 
@@ -99,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Creating service... ");
     io::stdout().flush()?;
 
-    match client.create_service("my_tenant", "config", 65536).await {
+    match session.create_service("config", 65536).await {
         Ok(id) => {
             println!("✅");
             println!("  │  └─ ID: {}", id);
@@ -116,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Reading service info... ");
     io::stdout().flush()?;
 
-    match client.get_service("my_tenant", "config").await {
+    match session.get_service("config").await {
         Ok(service) => {
             println!("✅");
             println!("  │  └─ Service ID: {}", service.id);
@@ -139,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print!("  ├─ Deleting service... ");
     io::stdout().flush()?;
 
-    match client.delete_service("my_tenant", "config").await {
+    match session.delete_service("config").await {
         Ok(_) => println!("✅"),
         Err(commy_sdk_rust::CommyError::NotFound(_)) => println!("ℹ️  (not found)"),
         Err(e) => println!("⚠️  ({})", e),

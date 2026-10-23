@@ -23,11 +23,13 @@
 //!     // Connect to server
 //!     client.connect().await?;
 //!     
-//!     // Authenticate with a tenant
-//!     client.authenticate("my_tenant", auth::api_key("api_key_value".to_string())).await?;
+//!     // Authenticate with a tenant; everything that needs a login is a method on the session
+//!     let session = client
+//!         .authenticate("my_tenant", auth::api_key("api_key_value".to_string()))
+//!         .await?;
 //!     
-//!     // Create or get a service
-//!     let _service = client.get_service("my_tenant", "config").await?;
+//!     // Get a service of that tenant
+//!     let _service = session.get_service("config").await?;
 //!     
 //!     Ok(())
 //! }
@@ -42,6 +44,7 @@ pub mod file_accessor;
 pub mod local_map;
 pub mod message;
 pub mod service;
+pub mod session;
 pub mod shared_file;
 pub mod state;
 pub mod virtual_file;
@@ -52,6 +55,7 @@ pub use error::{CommyError, Result};
 pub use examples_support::{CommyServer, ServerConfig};
 pub use message::{ClientMessage, ServerMessage};
 pub use service::Service;
+pub use session::Session;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
