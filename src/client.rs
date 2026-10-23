@@ -496,6 +496,8 @@ impl Client {
     /// - Tenant already exists
     /// - Insufficient permissions (need admin role)
     pub async fn create_tenant(&self, tenant_id: &str, tenant_name: &str) -> Result<String> {
+        self.require_session().await?;
+
         // Request tenant creation
         self.send_message(ClientMessage::CreateTenant {
             tenant_id: tenant_id.to_string(),
@@ -538,6 +540,8 @@ impl Client {
     /// - Insufficient permissions (need admin role)
     /// - Tenant has active clients
     pub async fn delete_tenant(&self, tenant_id: &str) -> Result<()> {
+        self.require_session().await?;
+
         // Request tenant deletion
         self.send_message(ClientMessage::DeleteTenant {
             tenant_id: tenant_id.to_string(),
@@ -566,6 +570,8 @@ impl Client {
 
     /// Read a variable value
     pub async fn read_variable(&self, service_id: &str, variable_name: &str) -> Result<Vec<u8>> {
+        self.require_session().await?;
+
         self.send_message(ClientMessage::ReadVariable {
             service_id: service_id.to_string(),
             variable_name: variable_name.to_string(),
@@ -594,6 +600,8 @@ impl Client {
         variable_name: &str,
         data: Vec<u8>,
     ) -> Result<()> {
+        self.require_session().await?;
+
         self.send_message(ClientMessage::WriteVariable {
             service_id: service_id.to_string(),
             variable_name: variable_name.to_string(),
@@ -606,6 +614,8 @@ impl Client {
 
     /// Subscribe to variable changes
     pub async fn subscribe(&self, service_id: &str, variable_name: &str) -> Result<()> {
+        self.require_session().await?;
+
         self.send_message(ClientMessage::Subscribe {
             service_id: service_id.to_string(),
             variable_name: variable_name.to_string(),
@@ -617,6 +627,8 @@ impl Client {
 
     /// Unsubscribe from variable changes
     pub async fn unsubscribe(&self, service_id: &str, variable_name: &str) -> Result<()> {
+        self.require_session().await?;
+
         self.send_message(ClientMessage::Unsubscribe {
             service_id: service_id.to_string(),
             variable_name: variable_name.to_string(),
@@ -676,6 +688,18 @@ impl Client {
     pub async fn connection_state(&self) -> ConnectionState {
         let state = self.state.read().await;
         state.connection_state
+    }
+
+    /// Refuse an operation that needs a session when no tenant is authenticated, before anything
+    /// is sent. (The server answers `UNAUTHENTICATED` to these too; this saves the round trip and
+    /// the reply-queue slot.) `heartbeat` is exempt, as it is on the server.
+    async fn require_session(&self) -> Result<()> {
+        if self.state.read().await.authenticated_tenants().is_empty() {
+            return Err(CommyError::PermissionDenied(
+                "Not authenticated: call authenticate first".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Get authenticated tenants
@@ -2077,6 +2101,71 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // audit-2: every operation that needs a session refuses before sending
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// An unauthenticated client with a live connection must not put the request on the wire.
+    async fn unauthenticated_client_with_connection() -> (
+        Client,
+        tokio::sync::mpsc::UnboundedReceiver<crate::message::ClientMessage>,
+        tokio::sync::mpsc::UnboundedSender<crate::message::ServerMessage>,
+    ) {
+        let client = Client::new("wss://test");
+        let (conn, server_tx, client_rx) = crate::connection::Connection::new_for_test();
+        client.inject_connection_for_test(conn).await;
+        (client, client_rx, server_tx)
+    }
+
+    #[tokio::test]
+    async fn test_unauthenticated_operations_are_refused_and_send_nothing() {
+        let (client, mut sent, _server_tx) = unauthenticated_client_with_connection().await;
+
+        let results: Vec<(&str, Result<()>)> = vec![
+            (
+                "create_tenant",
+                client.create_tenant("t", "T").await.map(|_| ()),
+            ),
+            ("delete_tenant", client.delete_tenant("t").await),
+            (
+                "read_variable",
+                client.read_variable("svc", "v").await.map(|_| ()),
+            ),
+            (
+                "write_variable",
+                client.write_variable("svc", "v", vec![1]).await,
+            ),
+            ("subscribe", client.subscribe("svc", "v").await),
+            ("unsubscribe", client.unsubscribe("svc", "v").await),
+        ];
+        for (name, result) in results {
+            match result {
+                Err(CommyError::PermissionDenied(_)) => {}
+                other => panic!(
+                    "{name} without authentication: expected PermissionDenied, got {other:?}"
+                ),
+            }
+        }
+        assert!(
+            sent.try_recv().is_err(),
+            "an unauthenticated client put a message on the wire"
+        );
+    }
+
+    /// Positive control for the test above: with a tenant authenticated the same calls are sent.
+    #[tokio::test]
+    async fn test_authenticated_operations_are_sent() {
+        let (client, mut sent, _server_tx) = unauthenticated_client_with_connection().await;
+        client.inject_auth_for_test("t").await;
+
+        client.write_variable("svc", "v", vec![1]).await.unwrap();
+        client.subscribe("svc", "v").await.unwrap();
+        client.unsubscribe("svc", "v").await.unwrap();
+        assert!(sent.try_recv().is_ok(), "write_variable was not sent");
+        assert!(sent.try_recv().is_ok(), "subscribe was not sent");
+        assert!(sent.try_recv().is_ok(), "unsubscribe was not sent");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Bug #14 regression tests: server Error response must NOT be silently
     // converted to Timeout.  These verify the match-based response handlers.
     // ─────────────────────────────────────────────────────────────────────────
@@ -2356,6 +2445,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_read_variable_when_disconnected_returns_connection_lost() {
         let client = Client::new("wss://localhost:9999");
+        client.inject_auth_for_test("tenant_a").await;
         let result = client.read_variable("svc_id", "var_name").await;
         assert!(
             result.is_err(),
@@ -2370,6 +2460,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_write_variable_when_disconnected_returns_connection_lost() {
         let client = Client::new("wss://localhost:9999");
+        client.inject_auth_for_test("tenant_a").await;
         let result = client
             .write_variable("svc_id", "var_name", vec![1, 2, 3])
             .await;
@@ -2386,6 +2477,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_subscribe_when_disconnected_returns_connection_lost() {
         let client = Client::new("wss://localhost:9999");
+        client.inject_auth_for_test("tenant_a").await;
         let result = client.subscribe("svc_id", "var_name").await;
         assert!(result.is_err(), "subscribe with no connection must fail");
         assert!(
@@ -2580,6 +2672,7 @@ mod tests {
         let (conn, _server_tx, client_rx) = crate::connection::Connection::new_for_test();
         // _server_tx dropped intentionally: these tests never pre-load a response.
         // conn.recv() returns None (channel closed), which heartbeat handles gracefully.
+        client.inject_auth_for_test("tenant_a").await;
         client.inject_connection_for_test(conn).await;
         (client, client_rx)
     }
@@ -2624,6 +2717,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_unsubscribe_when_disconnected_returns_connection_lost() {
         let client = Client::new("wss://localhost:9999");
+        client.inject_auth_for_test("tenant_a").await;
         let result = client.unsubscribe("svc_1", "temp").await;
         assert!(result.is_err());
         assert!(
