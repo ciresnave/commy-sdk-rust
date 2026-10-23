@@ -9,6 +9,7 @@ version is one number for the whole project, and while it is below 1.0 the minor
 ### Added
 
 - `LICENSE` (MIT, as declared in `Cargo.toml`) and this changelog.
+- `SPDX-License-Identifier: MIT` header on every Rust source file.
 
 ### Changed
 

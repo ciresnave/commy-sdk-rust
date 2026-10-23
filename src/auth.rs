@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Authentication utilities
 
 pub use crate::message::{AuthCredentials, Secret};

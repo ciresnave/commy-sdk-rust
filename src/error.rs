@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Error types for Commy client SDK
 
 use thiserror::Error;

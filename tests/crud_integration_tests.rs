@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Integration tests for CRUD operations
 //!
 //! These tests verify the complete end-to-end flow:

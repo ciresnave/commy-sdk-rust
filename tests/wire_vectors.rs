@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Conformance: the golden vectors of the pinned `commy-wire` run through the SDK's own message types.
 //!
 //! Every control message in `vectors/control_messages.json` that the SDK carries must parse as the

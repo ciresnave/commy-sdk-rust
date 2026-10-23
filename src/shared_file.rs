@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Scan-mode change tracking over a local mapping (plan S6/S7).
 //!
 //! `SharedFile` owns a [`LocalMap`] and a [`dirty_ranges::Scanner`] baseline. The program writes

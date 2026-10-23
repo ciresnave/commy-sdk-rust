@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Hybrid mode example - unified API for local and remote clients
 //!
 //! This example demonstrates:

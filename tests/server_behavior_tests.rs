@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Server-side CRUD behavior validation tests
 //!
 //! These tests validate the expected server behavior when handling CRUD operations.

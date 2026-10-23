@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! A tenant session: the proof that a connection is authenticated to one tenant.
 //!
 //! [`Client::authenticate`] returns a [`Session`]. Every operation that needs an authenticated

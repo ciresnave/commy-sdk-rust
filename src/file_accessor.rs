@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! File accessor abstraction for local and remote variable files
 
 use crate::error::Result;

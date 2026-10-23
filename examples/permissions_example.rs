@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Permission-aware CRUD example
 //!
 //! This example demonstrates how different permissions affect CRUD operations:

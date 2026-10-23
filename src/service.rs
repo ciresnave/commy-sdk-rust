@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Service abstraction for remote data access
 
 use crate::message::VariableMetadata;

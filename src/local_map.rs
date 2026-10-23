@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Local shared-memory mode (plan S1/S2): map the service file the server names, prove we share
 //! its machine with a nonce read from a side file, and fall back to WSS ranges on any failure.
 //!

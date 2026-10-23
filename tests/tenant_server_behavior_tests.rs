@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #[cfg(test)]
 mod tenant_server_behavior_tests {
     use serde_json::json;

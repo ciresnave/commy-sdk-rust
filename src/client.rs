@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! Main Commy client for connecting to servers
 
 use crate::auth::{AuthContext, AuthCredentials};

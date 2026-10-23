@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 //! File watcher and change detection engine
 //!
 //! Monitors temporary variable files for changes and uses SIMD
