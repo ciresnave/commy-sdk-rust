@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.3]
+
+### Changed
+
+- CodeRipper only: `.coderipper.toml` declares the six kept `reachability` items (`has_permission`, `is_admin`, `with_port`, `VERSION`, `into_inner`, `with_persistent`) as public API, each with its reason. No code change.
+
 ## [0.16.2]
 
 ### Changed
