@@ -8,6 +8,7 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ### Changed
 
+- Test fix: `local_mode_with_the_write_trap_reports_trapped_writes` creates a 64 KiB service; with the default 8 KiB the trap has no whole page on macOS Apple Silicon (16 KiB pages) and `arm_trap` correctly returned `TooSmall`.
 - CI only: the e2e suite also runs, as non-required `e2e-platforms` legs, on `ubuntu-24.04-arm`, `windows-latest`, `windows-11-arm`, `macos-latest` and `macos-15-intel`.
 
 ## [0.16.9]
