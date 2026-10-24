@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.8]
+
+### Changed
+
+- Docs only: `ROADMAP.md` gains the rows a spec-to-roadmap audit found missing (stale hybrid docs, benchmark claims, NEON idea, C FFI, platform gaps) and its 0.15.0 section is marked built.
+
 ## [0.16.7]
 
 ### Removed
