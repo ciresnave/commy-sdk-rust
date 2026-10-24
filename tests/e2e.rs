@@ -433,9 +433,19 @@ async fn a_client_without_a_grant_is_denied_until_granted_and_again_after_revoca
 
 /// A tenant whose service `svc` is open to local mapping, and two admin sessions on it.
 async fn local_rig(s: &Server, tenant: &str) -> (Arc<Session>, Arc<Session>, String) {
+    local_rig_sized(s, tenant, 8192).await
+}
+
+/// [`local_rig`] with a chosen service size. The write trap needs at least one whole OS page, and a page is
+/// 16 KiB on Apple Silicon (64 KiB on some Linux), so the trap test asks for more than the default.
+async fn local_rig_sized(
+    s: &Server,
+    tenant: &str,
+    size: u64,
+) -> (Arc<Session>, Arc<Session>, String) {
     let a = Arc::new(s.session(tenant).await);
     let b = Arc::new(s.session(tenant).await);
-    let svc = a.create_service("svc", 8192).await.unwrap();
+    let svc = a.create_service("svc", size).await.unwrap();
     assert_eq!(
         a.open_shared(&svc).await.unwrap(),
         None,
@@ -478,7 +488,7 @@ async fn local_mode_shares_one_mapping_between_clients_and_with_remote_ones() {
 #[tokio::test]
 async fn local_mode_with_the_write_trap_reports_trapped_writes() {
     let s = Server::start().await;
-    let (a, b, svc) = local_rig(&s, "t_trap").await;
+    let (a, b, svc) = local_rig_sized(&s, "t_trap", 65536).await;
     a.open_shared(&svc).await.unwrap().expect("local mapping");
     b.open_shared(&svc).await.unwrap().expect("local mapping");
     // SAFETY: only this test thread writes the mapping, through `shared_write`.
