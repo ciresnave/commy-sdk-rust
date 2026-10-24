@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ciresnave/commy
-          ref: 2f69f802839b267142bd16bb9518edb86ca2ef53 # commy 0.21.0
+          ref: a79f20d98de2a796b25c7de9930a11cb01f38a9e # commy 0.22.3
           path: commy
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
