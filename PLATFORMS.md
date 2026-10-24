@@ -33,8 +33,11 @@ file (remote and local), an abort, a straggler, a revocation, and a server resta
 |---|---|---|
 | Linux x86_64 glibc (ubuntu-latest) | TESTED | CI `e2e (real commy server)` |
 | Linux x86_64 glibc, Docker rust:bookworm | TESTED | local run before each PR |
-| Windows x86_64 MSVC | TESTED (local only) | the lane's local runs against the same build; no CI job |
-| macOS (any) | UNVERIFIED | the e2e job does not run on macOS |
+| Windows x86_64 MSVC (windows-latest) | TESTED | CI `e2e (windows-latest)`, CI run 40139937817 on PR #51 (head 78b2df0); also the lane's local runs |
+| Linux aarch64 glibc (ubuntu-24.04-arm) | TESTED | CI `e2e (ubuntu-24.04-arm)`, same run |
+| Windows arm64 (windows-11-arm) | TESTED | CI `e2e (windows-11-arm)`, same run |
+| macOS Apple Silicon (macos-latest) | TESTED | CI `e2e (macos-latest)`, same run; needed a 64 KiB trap-test service (16 KiB pages) |
+| macOS Intel (macos-15-intel) | TESTED | CI `e2e (macos-15-intel)`, same run |
 | every other platform | UNVERIFIED | no job, no local run |
 
 Only the commy server built from the pinned commit is exercised; what it does not implement yet (real
@@ -51,15 +54,15 @@ authentication, a durable audit log) is not tested here.
 |---|---|---|
 | Linux x86_64 glibc | TESTED | lib tests in CI `test (ubuntu-latest)`; local-mode e2e with the trap in CI `e2e` |
 | Windows x86_64 | TESTED | lib tests in CI `test (windows-latest)`; local-mode e2e with the trap run locally |
-| macOS Apple Silicon | TESTED (lib tests only) | CI `test (macos-latest)`; no e2e with the trap |
-| Linux aarch64 glibc; Windows arm64; macOS Intel | TESTED (lib tests only) | CI `test` legs on those runners, CI run 40128032360 on PR #47; no e2e with the trap |
+| macOS Apple Silicon | TESTED | CI `test (macos-latest)` and `e2e (macos-latest)` with the trap, CI run 40139937817 on PR #51 (head 78b2df0) |
+| Linux aarch64 glibc; Windows arm64; macOS Intel | TESTED | CI `test` and `e2e` legs on those runners, same run (the e2e write-trap test passes on all of them) |
 | Linux aarch64 musl | UNVERIFIED in the SDK | `dirty-ranges` lists it UNVERIFIED too; this crate has not run on it |
 | NetBSD, OpenBSD, Linux with 64 KiB pages, 32-bit targets | UNVERIFIED | no job, no local run |
 
 Limits that come with the trap (from `dirty-ranges`; its README has the per-OS conformance table):
 
 * A thread that blocks `SIGSEGV`/`SIGBUS` must not write a trapped mapping. On Linux the process is killed (loud, not silent);
-  **on macOS the write was seen to hang instead**, and that case is NOT TESTED.
+  **on macOS the write HANGS instead** (measured by `dirty-ranges`, not by this crate: 5 of 5 rounds on macos-latest and 5 of 5 on macos-15-intel, its CI run 40137219741). This crate has no test of it; call `dirty_ranges::fault_signals_blocked()` on the writing thread first.
 * Nothing may read from the operating system straight into a trapped mapping (`read`, `recv`): the kernel reports `EFAULT`.
 * `vm.max_map_count` exhaustion and coexistence with other signal handlers (JVM, Go, sanitizers) are UNVERIFIED.
 
