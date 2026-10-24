@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.2]
+
+### Changed
+
+- CI only: the advisory CodeRipper `portfolio` job is pinned to coderipper `30e012b7` (was `a48fc6cc`).
+
 ## [0.16.1]
 
 ### Changed
