@@ -4,6 +4,13 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.6]
+
+### Changed
+
+- CI only: the `test` job also runs on `ubuntu-24.04-arm`, `windows-11-arm` and `macos-15-intel` (commy R2), so `PLATFORMS.md` can name those platforms TESTED from a green leg. The new legs are not required checks.
+- CI only: the advisory CodeRipper `portfolio` job is repinned to `ee9c3950` (0.9.24).
+
 ## [0.16.5]
 
 ### Changed

@@ -13,7 +13,10 @@ named; **UNVERIFIED** means nobody has run it (no assumption is made either way)
 | macOS Apple Silicon (macos-latest) | TESTED | CI `test (macos-latest)` |
 | Linux x86_64 glibc, Docker rust:bookworm | TESTED | local run before each PR (not CI) |
 | MSRV 1.94 | TESTED (compile only) | CI `MSRV` job: `cargo check --all-targets --all-features` on ubuntu |
-| Linux musl, aarch64 Linux, Windows arm64, macOS Intel, FreeBSD and other BSDs, 32-bit targets | UNVERIFIED | no job, no local run |
+| Linux aarch64 glibc (ubuntu-24.04-arm) | TESTED | CI `test (ubuntu-24.04-arm)`, CI run 40128032360 on PR #47 |
+| Windows arm64 (windows-11-arm) | TESTED | CI `test (windows-11-arm)`, same run |
+| macOS Intel (macos-15-intel) | TESTED | CI `test (macos-15-intel)`, same run |
+| Linux musl, aarch64 musl, FreeBSD and other BSDs, 32-bit targets | UNVERIFIED | no job, no local run |
 
 CI also runs `cargo fmt --check`, `clippy -D warnings`, `cargo doc` (warnings denied) and `cargo deny`
 (advisories, licences, bans, sources) on ubuntu. Those are platform-independent.
@@ -49,7 +52,8 @@ authentication, a durable audit log) is not tested here.
 | Linux x86_64 glibc | TESTED | lib tests in CI `test (ubuntu-latest)`; local-mode e2e with the trap in CI `e2e` |
 | Windows x86_64 | TESTED | lib tests in CI `test (windows-latest)`; local-mode e2e with the trap run locally |
 | macOS Apple Silicon | TESTED (lib tests only) | CI `test (macos-latest)`; no e2e with the trap |
-| Linux aarch64, musl; Windows arm64; macOS Intel | UNVERIFIED in the SDK | the `dirty-ranges` conformance table has results for some of these, but this crate has not run on them |
+| Linux aarch64 glibc; Windows arm64; macOS Intel | TESTED (lib tests only) | CI `test` legs on those runners, CI run 40128032360 on PR #47; no e2e with the trap |
+| Linux aarch64 musl | UNVERIFIED in the SDK | `dirty-ranges` lists it UNVERIFIED too; this crate has not run on it |
 | NetBSD, OpenBSD, Linux with 64 KiB pages, 32-bit targets | UNVERIFIED | no job, no local run |
 
 Limits that come with the trap (from `dirty-ranges`; its README has the per-OS conformance table):
