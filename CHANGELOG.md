@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.7]
+
+### Removed
+
+- The never-started background heartbeat task and its two private fields (`heartbeat_interval`, `heartbeat_task`). The server answers `Heartbeat` but evicts no idle session, and a background `recv()` would race request replies. `Client::heartbeat()` is unchanged.
+
 ## [0.16.6]
 
 ### Changed
