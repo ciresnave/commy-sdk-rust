@@ -8,7 +8,7 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ### Changed
 
-- `LICENSE` copyright holder is now Eric Evans (was "Commy Contributors"); the C FFI to-do is dropped from `HYBRID_IMPLEMENTATION_SUMMARY.md`. Docs and licence text only.
+- `LICENSE` copyright holder and `Cargo.toml` `authors` are now Eric Evans (were "Commy Contributors"); the C FFI to-do is dropped from `HYBRID_IMPLEMENTATION_SUMMARY.md`. Docs and licence text only.
 
 ## [0.16.8]
 
