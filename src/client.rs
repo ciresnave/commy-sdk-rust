@@ -107,14 +107,6 @@ pub struct Client {
     /// Shared client state
     state: SharedState,
 
-    /// Heartbeat interval
-    // The background heartbeat task is disabled (see the TODO in `_connect_impl`).
-    #[allow(
-        dead_code,
-        reason = "read only by the disabled background heartbeat task"
-    )]
-    heartbeat_interval: Duration,
-
     /// Maximum reconnection attempts
     max_reconnect_attempts: u32,
 
@@ -135,13 +127,6 @@ pub struct Client {
 
     /// Services mapped locally (scan mode), by service id
     shared: Arc<RwLock<std::collections::HashMap<String, SharedFile>>>,
-
-    /// Background heartbeat task handle
-    #[allow(
-        dead_code,
-        reason = "set only by the disabled background heartbeat task"
-    )]
-    heartbeat_task: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Client {
@@ -181,7 +166,6 @@ impl Client {
             server_url: server_url.into(),
             connection: Arc::new(RwLock::new(None)),
             state: create_shared_state(client_id),
-            heartbeat_interval: Duration::from_secs(30),
             max_reconnect_attempts: 5,
             tls_root_pem: None,
             dev_scopes: None,
@@ -189,7 +173,6 @@ impl Client {
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            heartbeat_task: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -222,7 +205,6 @@ impl Client {
             server_url: server_url.into(),
             connection: Arc::new(RwLock::new(None)),
             state: create_shared_state(client_id),
-            heartbeat_interval: Duration::from_secs(30),
             max_reconnect_attempts: 5,
             tls_root_pem: None,
             dev_scopes: None,
@@ -230,7 +212,6 @@ impl Client {
             virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
             file_watcher: Arc::new(RwLock::new(None)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            heartbeat_task: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -263,10 +244,6 @@ impl Client {
 
                 // Reset reconnection attempts on successful connection
                 self.reconnect_attempts.store(0, Ordering::SeqCst);
-
-                // TODO: Re-enable background heartbeat task
-                // For now, disabled to avoid message ordering issues with concurrent operations
-                // self.start_heartbeat_task().await;
 
                 // WebSocket connection established - no Connect message needed
                 // Authentication will be the first message sent
@@ -1648,56 +1625,6 @@ impl Client {
             self.flush_shared(&c.service_id).await?;
         }
         Ok(())
-    }
-
-    /// Start background heartbeat task
-    #[allow(
-        dead_code,
-        reason = "the heartbeat task is disabled (see the TODO in `_connect_impl`)"
-    )]
-    async fn start_heartbeat_task(&self) {
-        // Stop existing heartbeat task if any
-        let mut task_guard = self.heartbeat_task.write().await;
-        if let Some(handle) = task_guard.take() {
-            handle.abort();
-        }
-
-        let interval = self.heartbeat_interval;
-        let client_id = self.client_id.clone();
-        let connection = Arc::clone(&self.connection);
-        let state = Arc::clone(&self.state);
-
-        let handle = tokio::spawn(async move {
-            let mut interval_timer = tokio::time::interval(interval);
-            interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                interval_timer.tick().await;
-
-                // Check if still connected
-                let conn_guard = connection.read().await;
-                if let Some(conn) = conn_guard.as_ref() {
-                    // Send heartbeat
-                    let heartbeat_msg = ClientMessage::Heartbeat {
-                        client_id: client_id.clone(),
-                    };
-
-                    if conn.send(heartbeat_msg).await.is_ok() {
-                        // Update last activity timestamp
-                        let mut state_guard = state.write().await;
-                        state_guard.touch();
-                    } else {
-                        // Heartbeat failed, connection likely lost
-                        break;
-                    }
-                } else {
-                    // No connection, stop heartbeat task
-                    break;
-                }
-            }
-        });
-
-        *task_guard = Some(handle);
     }
 
     /// Initialize file watcher for hybrid mode (internal)
