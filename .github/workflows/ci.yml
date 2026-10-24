@@ -40,9 +40,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # Shared memory and page protection are platform-specific: all three must run the tests.
+      # Shared memory and page protection are platform-specific, so the tests run on every OS and architecture GitHub hosts
+      # (PLATFORMS.md names each TESTED only from a green leg here). The three arm/intel legs are not required checks.
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest, ubuntu-24.04-arm, windows-11-arm, macos-15-intel]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
