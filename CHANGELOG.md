@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.9]
+
+### Changed
+
+- `LICENSE` copyright holder and `Cargo.toml` `authors` are now Eric Evans (were "Commy Contributors"); the C FFI to-do is dropped from `HYBRID_IMPLEMENTATION_SUMMARY.md`. Docs and licence text only.
+
 ## [0.16.8]
 
 ### Changed

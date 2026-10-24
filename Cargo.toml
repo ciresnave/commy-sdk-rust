@@ -13,8 +13,8 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.16.8"
-authors = ["Commy Contributors"]
+version = "0.16.9"
+authors = ["Eric Evans <ciresnave@gmail.com>"]
 build = false
 autolib = false
 autobins = false

@@ -314,7 +314,6 @@ See: `SERVER_HYBRID_GUIDE.md` for implementation details
 ### To-Do 🔄
 - Server-side protocol handler (external)
 - Integration tests with real server (external)
-- C FFI wrapper extensions (optional)
 - Performance benchmarking suite
 - Stress testing (10,000+ variables)
 
