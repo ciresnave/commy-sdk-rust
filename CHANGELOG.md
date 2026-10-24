@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.10]
+
+### Changed
+
+- CI only: the e2e suite also runs, as non-required `e2e-platforms` legs, on `ubuntu-24.04-arm`, `windows-latest`, `windows-11-arm`, `macos-latest` and `macos-15-intel`.
+
 ## [0.16.9]
 
 ### Changed
