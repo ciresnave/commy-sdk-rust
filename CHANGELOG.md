@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.5]
+
+### Changed
+
+- CI only: the e2e job builds commy 0.22.3 (`a79f20d9`; was 0.21.0), so the 14 e2e tests run against the current server.
+
 ## [0.16.4]
 
 ### Changed
