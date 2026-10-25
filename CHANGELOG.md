@@ -4,6 +4,16 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.17.1]
+
+### Changed
+
+- Docs only: the eight "hybrid" guides, which described the layer removed in 0.17.0 (and the removed named variables), are replaced
+  by `README.md` (new; also `readme` in `Cargo.toml`, and its code blocks run as doctests), `ARCHITECTURE.md`, `API.md` and the
+  rewritten `MIGRATION_GUIDE.md`. `QUICK_START.md` and `CRUD_API_REFERENCE.md` named the crate `commy_client` with a path
+  dependency and used an undefined `auth_ctx`; they are folded into the README and `API.md`. `examples/README.md` lists the two
+  examples that exist.
+
 ## [0.17.0]
 
 ### Breaking

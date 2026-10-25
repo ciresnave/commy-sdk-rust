@@ -117,3 +117,8 @@ pub use session::Session;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Compiles and runs the code blocks of `README.md` as doctests, so the front page cannot drift from the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
