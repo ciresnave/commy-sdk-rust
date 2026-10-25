@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.17.0"
+version = "0.17.1"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 build = false
 autolib = false
@@ -22,7 +22,7 @@ autoexamples = false
 autotests = false
 autobenches = false
 description = "Rust client SDK for Commy shared memory coordination system"
-readme = false
+readme = "README.md"
 license = "MIT"
 repository = "https://github.com/ciresnave/commy-sdk-rust"
 
