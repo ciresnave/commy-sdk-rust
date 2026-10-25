@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.16.11]
+
+### Changed
+
+- Docs only: `README_HYBRID.md` and `HYBRID_IMPLEMENTATION_SUMMARY.md` no longer say the SDK was never run against a real server or that the server handler is missing; the unmeasured benchmark table is deleted.
+
 ## [0.16.10]
 
 ### Changed
