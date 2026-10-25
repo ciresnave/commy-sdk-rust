@@ -4,6 +4,13 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.17.2]
+
+### Added
+
+- Docs only: `docs/PATENT-SWEEP.md`, the patent sweep of 0.17.1 (AI-assisted due diligence, not legal
+  advice). One hit is `needs-review`: the opt-in write trap, which is `dirty-ranges`' code.
+
 ## [0.17.1]
 
 ### Changed
