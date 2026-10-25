@@ -10,8 +10,6 @@ use crate::service::Service;
 use crate::session::Session;
 use crate::shared_file::SharedFile;
 use crate::state::{create_shared_state, SharedState};
-use crate::virtual_file::VirtualVariableFile;
-use crate::watcher::VariableFileWatcher;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -119,12 +117,6 @@ pub struct Client {
     /// Current reconnection attempt
     reconnect_attempts: Arc<AtomicU64>,
 
-    /// Virtual variable files by service ID
-    virtual_files: Arc<RwLock<std::collections::HashMap<String, Arc<VirtualVariableFile>>>>,
-
-    /// File watcher for change detection
-    file_watcher: Arc<RwLock<Option<Arc<VariableFileWatcher>>>>,
-
     /// Services mapped locally (scan mode), by service id
     shared: Arc<RwLock<std::collections::HashMap<String, SharedFile>>>,
 }
@@ -136,11 +128,8 @@ impl Client {
     /// 1. Creates a new client
     /// 2. Connects to the server
     /// 3. Authenticates to the tenant
-    /// 4. Initializes the file watcher
-    /// 5. Starts file monitoring
     ///
-    /// Returns the [`Session`] for the tenant (its [`Session::client`] is the client). After this
-    /// the session is ready to use with `get_virtual_service_file()`.
+    /// Returns the [`Session`] for the tenant (its [`Session::client`] is the client).
     pub async fn initialize(
         server_url: impl Into<String>,
         tenant_id: impl Into<String>,
@@ -151,8 +140,6 @@ impl Client {
         let auth = client
             ._authenticate_impl(&tenant_id.into(), credentials)
             .await?;
-        client._init_file_watcher_impl().await?;
-        client._start_file_monitoring_impl().await?;
         Ok(Session::new(client, auth))
     }
 
@@ -170,8 +157,6 @@ impl Client {
             tls_root_pem: None,
             dev_scopes: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
-            virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            file_watcher: Arc::new(RwLock::new(None)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
@@ -209,8 +194,6 @@ impl Client {
             tls_root_pem: None,
             dev_scopes: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
-            virtual_files: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            file_watcher: Arc::new(RwLock::new(None)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
@@ -1627,122 +1610,6 @@ impl Client {
         Ok(())
     }
 
-    /// Initialize file watcher for hybrid mode (internal)
-    #[inline]
-    async fn _init_file_watcher_impl(&self) -> Result<()> {
-        let watcher = VariableFileWatcher::new(None).await?;
-        let watcher = Arc::new(watcher);
-        watcher.start_watching().await?;
-        *self.file_watcher.write().await = Some(watcher);
-        Ok(())
-    }
-
-    /// Initialize file watcher for hybrid mode (public - for testing/special cases)
-    pub(crate) async fn init_file_watcher(&self) -> Result<()> {
-        self._init_file_watcher_impl().await
-    }
-
-    /// Get or create a virtual variable file for a service
-    ///
-    /// This creates a virtual representation that works seamlessly for both:
-    /// - Local clients: Memory-mapped to actual service file
-    /// - Remote clients: In-memory buffer synced via WSS
-    pub(crate) async fn get_virtual_service_file(
-        &self,
-        tenant_id: &str,
-        service_name: &str,
-    ) -> Result<Arc<VirtualVariableFile>> {
-        let service_id = format!("{}_{}", tenant_id, service_name);
-
-        // Check if already loaded
-        {
-            let vfiles = self.virtual_files.read().await;
-            if let Some(vf) = vfiles.get(&service_id) {
-                return Ok(Arc::clone(vf));
-            }
-        }
-
-        // Create new virtual file
-        let vf = Arc::new(VirtualVariableFile::new(
-            service_id.clone(),
-            service_name.to_string(),
-            tenant_id.to_string(),
-        ));
-
-        // Register with watcher if available
-        if let Some(watcher_guard) = self.file_watcher.read().await.as_ref() {
-            watcher_guard
-                .register_virtual_file(service_id.clone(), Arc::clone(&vf))
-                .await?;
-        }
-
-        // Store in cache
-        let mut vfiles = self.virtual_files.write().await;
-        vfiles.insert(service_id, Arc::clone(&vf));
-
-        Ok(vf)
-    }
-
-    /// Start monitoring virtual files for changes (internal)
-    ///
-    /// This spawns a background task that watches for file changes
-    /// and automatically detects which variables have changed using SIMD
-    #[inline]
-    async fn _start_file_monitoring_impl(&self) -> Result<()> {
-        let watcher = self.file_watcher.read().await;
-        if watcher.is_some() {
-            // Already started in init_file_watcher
-            Ok(())
-        } else {
-            drop(watcher);
-            self._init_file_watcher_impl().await
-        }
-    }
-
-    /// Start monitoring virtual files for changes (public - for testing/special cases)
-    ///
-    /// This spawns a background task that watches for file changes
-    /// and automatically detects which variables have changed using SIMD
-    pub(crate) async fn start_file_monitoring(&self) -> Result<()> {
-        self._start_file_monitoring_impl().await
-    }
-
-    /// Get next file change event (blocks until a file changes)
-    pub(crate) async fn wait_for_file_change(
-        &self,
-    ) -> Result<Option<crate::watcher::FileChangeEvent>> {
-        let watcher = self.file_watcher.read().await;
-        if let Some(w) = watcher.as_ref() {
-            Ok(w.next_change().await)
-        } else {
-            Err(CommyError::InvalidState(
-                "File watcher not initialized. Call start_file_monitoring() first".to_string(),
-            ))
-        }
-    }
-
-    /// Try to get next file change event (non-blocking)
-    pub(crate) async fn try_get_file_change(
-        &self,
-    ) -> Result<Option<crate::watcher::FileChangeEvent>> {
-        let watcher = self.file_watcher.read().await;
-        if let Some(w) = watcher.as_ref() {
-            Ok(w.try_next_change().await)
-        } else {
-            Err(CommyError::InvalidState(
-                "File watcher not initialized. Call start_file_monitoring() first".to_string(),
-            ))
-        }
-    }
-
-    /// Stop file monitoring
-    pub(crate) async fn stop_file_monitoring(&self) -> Result<()> {
-        if let Some(watcher) = self.file_watcher.write().await.take() {
-            watcher.stop_watching().await?;
-        }
-        Ok(())
-    }
-
     /// Inject a pre-built `Connection` into the client (for unit testing without a real server).
     ///
     /// Sets the connection field **and** advances `connection_state` to `Connected` so
@@ -1825,134 +1692,6 @@ mod tests {
     fn test_client_server_url() {
         let client = Client::new("wss://example.com:9000");
         assert_eq!(client.server_url(), "wss://example.com:9000");
-    }
-
-    // ─── File watcher methods ─────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_init_file_watcher_succeeds() {
-        let client = Client::new("wss://localhost:9000");
-        let result = client.init_file_watcher().await;
-        assert!(
-            result.is_ok(),
-            "init_file_watcher should succeed: {:?}",
-            result
-        );
-    }
-
-    #[tokio::test]
-    async fn test_start_file_monitoring_succeeds_and_is_idempotent() {
-        let client = Client::new("wss://localhost:9000");
-        // First call initialises the watcher
-        let r1 = client.start_file_monitoring().await;
-        assert!(
-            r1.is_ok(),
-            "first start_file_monitoring should succeed: {:?}",
-            r1
-        );
-        // Second call is a no-op (watcher already exists)
-        let r2 = client.start_file_monitoring().await;
-        assert!(
-            r2.is_ok(),
-            "second start_file_monitoring should also succeed: {:?}",
-            r2
-        );
-        let _ = client.stop_file_monitoring().await;
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_file_change_uninitialized_returns_err() {
-        let client = Client::new("wss://localhost:9000");
-        // Watcher not initialised — should return Err(InvalidState)
-        let result = client.wait_for_file_change().await;
-        assert!(
-            matches!(result, Err(CommyError::InvalidState(_))),
-            "expected InvalidState error, got {:?}",
-            result
-        );
-    }
-
-    #[tokio::test]
-    async fn test_try_get_file_change_uninitialized_returns_err() {
-        let client = Client::new("wss://localhost:9000");
-        let result = client.try_get_file_change().await;
-        assert!(
-            matches!(result, Err(CommyError::InvalidState(_))),
-            "expected InvalidState error when watcher not initialised, got {:?}",
-            result
-        );
-    }
-
-    #[tokio::test]
-    async fn test_try_get_file_change_initialized_returns_ok_none() {
-        let client = Client::new("wss://localhost:9000");
-        client.init_file_watcher().await.unwrap();
-        // No file changes have occurred, so the channel should be empty
-        let result = client.try_get_file_change().await;
-        assert!(
-            matches!(result, Ok(None)),
-            "expected Ok(None) with no pending events, got {:?}",
-            result
-        );
-        let _ = client.stop_file_monitoring().await;
-    }
-
-    #[tokio::test]
-    async fn test_stop_file_monitoring_clears_watcher() {
-        let client = Client::new("wss://localhost:9000");
-        client.init_file_watcher().await.unwrap();
-
-        // Watcher is live — non-blocking peek should be Ok(None)
-        assert!(matches!(client.try_get_file_change().await, Ok(None)));
-
-        // Stop the watcher
-        let stop_result = client.stop_file_monitoring().await;
-        assert!(
-            stop_result.is_ok(),
-            "stop_file_monitoring should succeed: {:?}",
-            stop_result
-        );
-
-        // After stopping, the watcher slot is None ⇒ try_get returns InvalidState
-        let after = client.try_get_file_change().await;
-        assert!(
-            matches!(after, Err(CommyError::InvalidState(_))),
-            "expected InvalidState after stopping, got {:?}",
-            after
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_virtual_service_file_creates_and_caches() {
-        let client = Client::new("wss://localhost:9000");
-
-        // First call creates the virtual file
-        let vf1 = client
-            .get_virtual_service_file("tenant_a", "my_service")
-            .await
-            .expect("should create virtual service file");
-
-        // Second call with same args returns the cached instance (same Arc pointer)
-        let vf2 = client
-            .get_virtual_service_file("tenant_a", "my_service")
-            .await
-            .expect("should return cached virtual service file");
-
-        assert!(
-            Arc::ptr_eq(&vf1, &vf2),
-            "second call should return the cached VirtualVariableFile"
-        );
-
-        // Different service name → different file
-        let vf3 = client
-            .get_virtual_service_file("tenant_a", "other_service")
-            .await
-            .expect("should create a separate virtual service file");
-
-        assert!(
-            !Arc::ptr_eq(&vf1, &vf3),
-            "different service should be a separate file"
-        );
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -8,5 +8,4 @@ public_api = [
   { file = "src/examples_support.rs", symbol = "with_port", reason = "Builder method of ServerConfig, the config of the public demo-server helper." },
   { file = "src/lib.rs", symbol = "VERSION", reason = "Public constant naming the crate version for consumers." },
   { file = "src/message.rs", symbol = "into_inner", reason = "Secret::into_inner, the one sanctioned way to read a secret's value." },
-  { file = "src/virtual_file.rs", symbol = "with_persistent", reason = "Builder method for the public `persistent` field of VariableMetadata." },
 ]

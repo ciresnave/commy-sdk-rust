@@ -178,12 +178,6 @@ async fn list_examples() -> Json<Vec<Example>> {
             difficulty: "Beginner".to_string(),
         },
         Example {
-            name: "hybrid_client".to_string(),
-            description: "Understand hybrid local/remote access patterns using virtual files. See how the same code works transparently whether accessing local mapped files or remote services.".to_string(),
-            time_estimate: "~5 seconds".to_string(),
-            difficulty: "Intermediate".to_string(),
-        },
-        Example {
             name: "permissions_example".to_string(),
             description: "See granular permission control in action. Watch admin, read-only, and creator clients interact with the same service under different authorization constraints.".to_string(),
             time_estimate: "~7 seconds".to_string(),

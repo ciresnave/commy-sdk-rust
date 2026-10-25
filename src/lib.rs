@@ -35,21 +35,78 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! # Removed in 0.17.0
+//!
+//! The virtual-file layer (`VirtualVariableFile`, the file watcher, `FileAccessor`, the `Session` wrappers around
+//! them and the two `*VariableChanges*` messages) never reached the server: `commy-wire` has no such messages and the
+//! server answers them with an "unknown message type" error. Share bytes through `Session::open_shared`,
+//! `shared_write`, `flush_shared` and `open_remote`. Each removed item is pinned by a `compile_fail` test below:
+//!
+//! ```compile_fail,E0432
+//! use commy_sdk_rust::virtual_file::VirtualVariableFile;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use commy_sdk_rust::watcher::VariableFileWatcher;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use commy_sdk_rust::file_accessor::FileAccessor;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use commy_sdk_rust::file_accessor::LocalFileAccessor;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use commy_sdk_rust::file_accessor::RemoteFileAccessor;
+//! ```
+//!
+//! ```compile_fail,E0599
+//! fn f(s: &commy_sdk_rust::Session) { let _ = s.init_file_watcher(); }
+//! ```
+//!
+//! ```compile_fail,E0599
+//! fn f(s: &commy_sdk_rust::Session) { let _ = s.get_virtual_service_file("svc"); }
+//! ```
+//!
+//! ```compile_fail,E0599
+//! fn f(s: &commy_sdk_rust::Session) { let _ = s.start_file_monitoring(); }
+//! ```
+//!
+//! ```compile_fail,E0599
+//! fn f(s: &commy_sdk_rust::Session) { let _ = s.wait_for_file_change(); }
+//! ```
+//!
+//! ```compile_fail,E0599
+//! fn f(s: &commy_sdk_rust::Session) { let _ = s.try_get_file_change(); }
+//! ```
+//!
+//! ```compile_fail,E0599
+//! fn f(s: &commy_sdk_rust::Session) { let _ = s.stop_file_monitoring(); }
+//! ```
+//!
+//! ```compile_fail,E0599
+//! let _ = commy_sdk_rust::ClientMessage::ReportVariableChanges { service_id: String::new(), changed_variables: vec![], new_values: vec![] };
+//! ```
+//!
+//! ```compile_fail,E0599
+//! let _ = commy_sdk_rust::ServerMessage::VariableChangesAcknowledged { service_id: String::new(), changed_variables: vec![] };
+//! ```
+//!
 
 pub mod auth;
 pub mod client;
 pub mod connection;
 pub mod error;
 pub mod examples_support;
-pub mod file_accessor;
 pub mod local_map;
 pub mod message;
 pub mod service;
 pub mod session;
 pub mod shared_file;
 pub mod state;
-pub mod virtual_file;
-pub mod watcher;
 
 pub use client::Client;
 pub use error::{CommyError, Result};

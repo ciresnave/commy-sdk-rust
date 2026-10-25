@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.16.11"
+version = "0.17.0"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 build = false
 autolib = false
@@ -45,10 +45,6 @@ name = "basic_client"
 path = "examples/basic_client.rs"
 
 [[example]]
-name = "hybrid_client"
-path = "examples/hybrid_client.rs"
-
-[[example]]
 name = "permissions_example"
 path = "examples/permissions_example.rs"
 
@@ -77,9 +73,6 @@ commy-wire = "0.5"
 dirty-ranges = "=0.1.2"
 page_size = "0.6"
 
-[dependencies.async-trait]
-version = "0.1"
-
 [dependencies.axum]
 version = "0.8"
 
@@ -87,17 +80,11 @@ version = "0.8"
 version = "0.4"
 features = ["serde"]
 
-[dependencies.dirs]
-version = "7"
-
 [dependencies.futures]
 version = "0.3"
 
 [dependencies.memmap2]
 version = "0.9"
-
-[dependencies.notify]
-version = "8"
 
 [dependencies.rmp-serde]
 version = "1.3"
