@@ -195,7 +195,7 @@ let data = vf.read_variable_slice("var").await?;
 **A:** Local files use 0600 permissions (owner-only access). All server operations check permissions. See HYBRID_ARCHITECTURE.md#security-considerations.
 
 ### Q: Can I use this in production?
-**A:** Not yet. The SDK is pre-1.0, has not been run against a real Commy server end to end, and the audit follow-ups in ROADMAP.md (unauthenticated operations, reply matching, wire disagreements) are open. See PLATFORMS.md and HYBRID_TESTING_GUIDE.md.
+**A:** Not yet. The SDK is pre-1.0 and the first coordinated release with Commy (which freezes the `commy-wire` layout) has not happened. It does run against a real Commy server in CI on six platforms, and the earlier audit follow-ups are done. See PLATFORMS.md and ROADMAP.md.
 
 ## Implementation Status
 
@@ -206,9 +206,9 @@ let data = vf.read_variable_slice("var").await?;
 | File Watcher   | Implemented | ✅ Yes       | ✅ Yes |
 | SIMD Detection | Implemented | ✅ Yes       | ✅ Yes |
 | Client API     | Implemented | ✅ Yes       | ✅ Yes |
-| Protocol       | Audit findings open (ROADMAP.md) | Partial | ✅ Yes |
+| Protocol       | Implemented (`commy-wire`) | ✅ Yes, e2e | ✅ Yes |
 | Documentation  | Written     | ✅ Extensive | ✅ Yes |
-| Server Handler | 🔄 Needed   | -           | ✅ Yes |
+| Server Handler | In Commy (`ciresnave/commy`) | ✅ e2e runs against it | ✅ Yes |
 
 ## Getting Help
 

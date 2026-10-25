@@ -6,7 +6,7 @@
 > answers them with an "unknown message type" error. Examples below that call them no longer apply; share bytes through
 > the shared-file API (`open_shared`, `shared_write`, `shared_read`, `flush_shared`, `open_remote`) instead.
 
-## Status: client side implemented; not verified against a real Commy server (see PLATFORMS.md, ROADMAP.md)
+## Status: client side implemented and run against a real Commy server in CI (`tests/e2e.rs`; see PLATFORMS.md for the platforms)
 
 The Commy Rust client SDK now includes a fully-functional **Pattern 3 (Hybrid)** architecture enabling transparent local/remote variable access with SIMD acceleration.
 
@@ -245,7 +245,6 @@ while let Some(event) = client.wait_for_file_change().await? {
 - ✅ Error handling
 - ✅ Permission checks
 - ✅ Change detection accuracy
-- ✅ Performance benchmarks
 
 **Run tests:**
 ```bash
@@ -253,36 +252,11 @@ cargo test --lib
 cargo test --example hybrid_client
 ```
 
-## Performance Benchmarks
+## Server side
 
-### Variable Access
-
-| Scenario            | Performance | vs Baseline |
-| ------------------- | ----------- | ----------- |
-| Remote (old WSS)    | 1-100 ms    | 1x          |
-| Local (old WSS)     | 1-100 ms    | 1x          |
-| Local (new hybrid)  | < 1 μs      | 1,000,000x  |
-| Remote (new hybrid) | 1-100 μs    | 100x        |
-
-### Change Detection (64KB file)
-
-| Method         | Time    |
-| -------------- | ------- |
-| Byte-by-byte   | ~64 μs  |
-| u64 comparison | ~8 μs   |
-| AVX2           | ~2 μs   |
-| AVX-512        | ~0.6 μs |
-
-## Server Integration Required
-
-The client side is complete. For full functionality, servers need to:
-
-1. **Handle GetServiceFilePath** - Return file path for local clients
-2. **Handle ReportVariableChanges** - Apply local changes and broadcast
-3. **Maintain service file mapping** - (tenant, service) → file path
-4. **Broadcast changes** - Notify remote clients of local updates
-
-See: `SERVER_HYBRID_GUIDE.md` for implementation details
+Commy implements the server (`ciresnave/commy`); the messages are the `commy-wire` crate's, which both sides depend on. The SDK's
+end-to-end tests run against the real binary (`tests/e2e.rs`). `SERVER_HYBRID_GUIDE.md` predates that protocol and is being
+rewritten (ROADMAP.md, `doc-named-variables`).
 
 ## Migration Path Recommendations
 
@@ -297,7 +271,7 @@ See: `SERVER_HYBRID_GUIDE.md` for implementation details
 1. **File watcher latency** - ~100ms debounce (by design for efficiency)
 2. **Local detection** - Requires server on same machine
 3. **SIMD availability** - Falls back gracefully on older CPUs
-4. **Scale** - Tested with 1000s of variables, limits TBD for millions
+4. **Scale** - not measured (ROADMAP.md, `bench-suite`)
 
 ## Roadmap
 
@@ -310,10 +284,9 @@ See: `SERVER_HYBRID_GUIDE.md` for implementation details
 - Comprehensive documentation
 - Unit tests
 - Example code
+- Server-side handler (commy) and integration tests against it (`tests/e2e.rs`)
 
 ### To-Do 🔄
-- Server-side protocol handler (external)
-- Integration tests with real server (external)
 - Performance benchmarking suite
 - Stress testing (10,000+ variables)
 
