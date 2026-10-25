@@ -87,13 +87,6 @@ pub enum ClientMessage {
 
     /// Echo the nonce read from the offered side file, proving the same filesystem view
     ConfirmLocal(commy_wire::ConfirmLocal),
-
-    /// Notify server of variable changes detected locally
-    ReportVariableChanges {
-        service_id: String,
-        changed_variables: Vec<String>,
-        new_values: Vec<(String, Vec<u8>)>,
-    },
 }
 
 /// Messages received from server
@@ -190,12 +183,6 @@ pub enum ServerMessage {
 
     /// The server accepted the nonce; local mapping is confirmed
     ConfirmLocalAck(commy_wire::ConfirmLocalAck),
-
-    /// Acknowledgment of variable changes
-    VariableChangesAcknowledged {
-        service_id: String,
-        changed_variables: Vec<String>,
-    },
 
     /// Heartbeat response (keep-alive)
     Heartbeat { timestamp: String },
@@ -694,28 +681,6 @@ mod tests {
         assert!(!format!("{msg:?}").contains("s3cret-nonce"));
     }
 
-    #[test]
-    fn test_client_message_report_variable_changes_round_trip() {
-        let new_values = vec![("v1".to_string(), vec![1u8, 2, 3])];
-        let msg = ClientMessage::ReportVariableChanges {
-            service_id: "svc6".to_string(),
-            changed_variables: vec!["v1".to_string()],
-            new_values: new_values.clone(),
-        };
-        match round_trip_client(msg) {
-            ClientMessage::ReportVariableChanges {
-                service_id,
-                changed_variables,
-                new_values: nv,
-            } => {
-                assert_eq!(service_id, "svc6");
-                assert_eq!(changed_variables, vec!["v1".to_string()]);
-                assert_eq!(nv, new_values);
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────
     // ServerMessage round-trip tests (untested variants)
     // ─────────────────────────────────────────────────────────────
@@ -789,24 +754,6 @@ mod tests {
                 assert!(o.path.is_none() && o.nonce_path.is_none())
             }
             other => panic!("Wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_server_message_variable_changes_acknowledged_round_trip() {
-        let msg = ServerMessage::VariableChangesAcknowledged {
-            service_id: "svc8".to_string(),
-            changed_variables: vec!["a".to_string(), "b".to_string()],
-        };
-        match round_trip_server(msg) {
-            ServerMessage::VariableChangesAcknowledged {
-                service_id,
-                changed_variables,
-            } => {
-                assert_eq!(service_id, "svc8");
-                assert_eq!(changed_variables, vec!["a".to_string(), "b".to_string()]);
-            }
-            _ => panic!("Wrong variant"),
         }
     }
 

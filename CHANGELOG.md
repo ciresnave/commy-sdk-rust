@@ -4,6 +4,24 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.17.0]
+
+### Breaking
+
+- **The virtual-file layer is removed.** It never reached the server: `commy-wire` has no such messages, and the server answers
+  them with an "unknown message type" error (commy's test `the_named_variable_messages_are_gone`). Nothing outside this crate
+  used it (crates.io dependents: 0; no hit in 128 portfolio repos at `origin/main`). Share bytes with `Session::open_shared`,
+  `shared_write`, `flush_shared` and `open_remote` instead. Removed:
+  - modules `virtual_file` (`VirtualVariableFile`, `virtual_file::VariableMetadata`), `watcher` (`VariableFileWatcher`,
+    `FileChangeEvent`) and `file_accessor` (`FileAccessor`, `LocalFileAccessor`, `RemoteFileAccessor`);
+  - `Session::init_file_watcher`, `get_virtual_service_file`, `start_file_monitoring`, `wait_for_file_change`,
+    `try_get_file_change`, `stop_file_monitoring`, and the `Client` internals behind them (`Client::initialize` no longer
+    starts a watcher);
+  - `ClientMessage::ReportVariableChanges` and `ServerMessage::VariableChangesAcknowledged`;
+  - `CommyError::WatcherError`, `VariableNotFound`, `SimdError`;
+  - `examples/hybrid_client.rs`, and the dependencies `notify`, `dirs` and `async-trait`.
+- Each removed item is pinned by a `compile_fail` doctest in the crate docs, so the public surface cannot quietly grow back.
+
 ## [0.16.11]
 
 ### Changed

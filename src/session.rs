@@ -35,8 +35,6 @@ use crate::client::{Client, RotationFill, RotationOutcome, SharedEvent};
 use crate::error::Result;
 use crate::local_map::NegotiatedFile;
 use crate::service::Service;
-use crate::virtual_file::VirtualVariableFile;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// A [`Client`] connection authenticated to one tenant.
@@ -295,46 +293,6 @@ impl Session {
     /// that names the already-mapped file as its new file is a duplicate and ignored.
     pub async fn complete_rotation(&self, commit: &commy_wire::RotationCommit) -> Result<()> {
         self.client.complete_rotation(commit).await
-    }
-
-    // ── virtual files and file watching ──────────────────────────────────────
-
-    /// Initialize file watcher for hybrid mode (public - for testing/special cases)
-    pub async fn init_file_watcher(&self) -> Result<()> {
-        self.client.init_file_watcher().await
-    }
-
-    /// Get a service of this session's tenant as a virtual variable file.
-    pub async fn get_virtual_service_file(
-        &self,
-        service_name: &str,
-    ) -> Result<Arc<VirtualVariableFile>> {
-        self.client
-            .get_virtual_service_file(&self.auth.tenant_id, service_name)
-            .await
-    }
-
-    /// Start monitoring virtual files for changes (public - for testing/special cases)
-    ///
-    /// This spawns a background task that watches for file changes
-    /// and automatically detects which variables have changed using SIMD
-    pub async fn start_file_monitoring(&self) -> Result<()> {
-        self.client.start_file_monitoring().await
-    }
-
-    /// Get next file change event (blocks until a file changes)
-    pub async fn wait_for_file_change(&self) -> Result<Option<crate::watcher::FileChangeEvent>> {
-        self.client.wait_for_file_change().await
-    }
-
-    /// Try to get next file change event (non-blocking)
-    pub async fn try_get_file_change(&self) -> Result<Option<crate::watcher::FileChangeEvent>> {
-        self.client.try_get_file_change().await
-    }
-
-    /// Stop file monitoring
-    pub async fn stop_file_monitoring(&self) -> Result<()> {
-        self.client.stop_file_monitoring().await
     }
 }
 

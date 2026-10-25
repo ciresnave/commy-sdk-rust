@@ -85,21 +85,9 @@ pub enum CommyError {
     #[error("File I/O error: {0}")]
     FileError(#[from] std::io::Error),
 
-    /// File watcher error
-    #[error("File watcher error: {0}")]
-    WatcherError(String),
-
-    /// Variable not found in file
-    #[error("Variable not found: {0}")]
-    VariableNotFound(String),
-
     /// Invalid variable offset
     #[error("Invalid variable offset: {0}")]
     InvalidOffset(String),
-
-    /// SIMD operation error
-    #[error("SIMD operation error: {0}")]
-    SimdError(String),
 
     /// Generic error
     #[error("{0}")]
@@ -171,20 +159,8 @@ mod tests {
                 CommyError::MemoryMappingError("mmap fail".to_string()),
             ),
             (
-                "File watcher error",
-                CommyError::WatcherError("watch fail".to_string()),
-            ),
-            (
-                "Variable not found",
-                CommyError::VariableNotFound("var_x".to_string()),
-            ),
-            (
                 "Invalid variable offset",
                 CommyError::InvalidOffset("bad offset".to_string()),
-            ),
-            (
-                "SIMD operation error",
-                CommyError::SimdError("simd fail".to_string()),
             ),
             ("just misc", CommyError::Other("just misc".to_string())),
         ];
