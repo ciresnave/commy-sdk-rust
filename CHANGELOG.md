@@ -4,6 +4,13 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.17.3]
+
+### Changed
+
+- Docs only: `docs/PATENT-SWEEP.md` now reads the claims of the checkpointing hits it had listed unread (US 9,256,496,
+  8,880,473, 9,792,182): all clear. Continuation 10,310,754 is still unread.
+
 ## [0.17.2]
 
 ### Added
