@@ -79,7 +79,7 @@ the SDK drains, fills and switches, and [API.md](API.md) lists every `Session` m
 
 ## Tests
 
-`cargo test --features logging` runs the unit and integration tests, including the `commy-wire` golden vectors
+`cargo test` runs the unit and integration tests, including the `commy-wire` golden vectors
 (`tests/wire_vectors.rs`). `tests/e2e.rs` (feature `e2e`, `COMMY_BIN` naming a built `commy` binary) runs the SDK against the real
 server; CI does this on six platforms.
 

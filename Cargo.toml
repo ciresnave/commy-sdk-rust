@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.17.3"
+version = "0.18.0"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 build = false
 autolib = false
@@ -30,7 +30,6 @@ repository = "https://github.com/ciresnave/commy-sdk-rust"
 default = []
 # Builds the end-to-end tests (`tests/e2e.rs`), which need a Commy server binary in `COMMY_BIN`.
 e2e = []
-logging = ["tracing-subscriber"]
 
 [lib]
 name = "commy_sdk_rust"
@@ -119,13 +118,6 @@ features = [
     "cors",
     "fs",
 ]
-
-[dependencies.tracing]
-version = "0.1"
-
-[dependencies.tracing-subscriber]
-version = "0.3"
-optional = true
 
 [dependencies.uuid]
 version = "1.0"

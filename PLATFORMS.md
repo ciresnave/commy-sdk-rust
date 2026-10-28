@@ -4,7 +4,7 @@ What has actually been run, and where. **TESTED** means a test or build ran on t
 named; **UNVERIFIED** means nobody has run it (no assumption is made either way). Updated 2026-10-20 at 0.11.5
 (commy R1 gate item 5: every OS and architecture named as TESTED or UNVERIFIED).
 
-## Library and unit/integration tests (`cargo test --features logging`)
+## Library and unit/integration tests (`cargo test`)
 
 | platform | status | evidence |
 |---|---|---|
@@ -78,7 +78,7 @@ Limits that come with the trap (from `dirty-ranges`; its README has the per-OS c
 ## How to reproduce
 
 ```
-cargo test --features logging --no-fail-fast
+cargo test --no-fail-fast
 docker run --rm -v "$PWD:/src:ro" -w /src -e CARGO_TARGET_DIR=/tmp/t rust:bookworm cargo test --lib
 cargo +1.94.0 check --all-targets --all-features
 # against a real server (COMMY_BIN names a built commy binary; see the CI job for how it is built):

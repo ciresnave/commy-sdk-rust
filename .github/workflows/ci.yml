@@ -50,7 +50,7 @@ jobs:
         with:
           toolchain: stable
       # Every feature except `e2e`, which needs a server binary and has its own job.
-      - run: cargo test --locked --features logging --no-fail-fast
+      - run: cargo test --locked --no-fail-fast
 
   e2e:
     name: e2e (real commy server)
