@@ -77,10 +77,6 @@ pub enum CommyError {
     #[error("Invalid state: {0}")]
     InvalidState(String),
 
-    /// Memory mapping error
-    #[error("Memory mapping error: {0}")]
-    MemoryMappingError(String),
-
     /// File I/O error
     #[error("File I/O error: {0}")]
     FileError(#[from] std::io::Error),
@@ -153,10 +149,6 @@ mod tests {
             (
                 "Invalid state",
                 CommyError::InvalidState("disconnected".to_string()),
-            ),
-            (
-                "Memory mapping error",
-                CommyError::MemoryMappingError("mmap fail".to_string()),
             ),
             (
                 "Invalid variable offset",

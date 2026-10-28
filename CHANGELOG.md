@@ -4,6 +4,13 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.18.0]
+
+### Removed (Breaking)
+
+- The `logging` feature, and the `tracing` and `tracing-subscriber` dependencies behind it: nothing in the crate used them.
+- `CommyError::MemoryMappingError`: nothing constructed it.
+
 ## [0.17.3]
 
 ### Changed
