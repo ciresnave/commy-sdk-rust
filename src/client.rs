@@ -364,14 +364,20 @@ impl Client {
         })
         .await?;
 
-        // Wait for service response
+        // Wait for the reply that names this service: the server's replies carry no request id, so
+        // a late reply to an earlier call is recognised by what it names and skipped.
         if let Some(conn) = &*self.connection.read().await {
-            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
-                Ok(Ok(Some(ServerMessage::Service { service_id, .. }))) => Ok(service_id),
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
-                Err(_) => Err(CommyError::Timeout),
-                _ => Err(CommyError::Timeout),
-            }
+            recv_matching(conn, Duration::from_secs(10), |m| match m {
+                ServerMessage::Service {
+                    service_id,
+                    service_name: n,
+                    tenant_id: t,
+                    ..
+                } if n == service_name && t == tenant_id => Some(Ok(service_id.clone())),
+                ServerMessage::Error { code, .. } => Some(Err(CommyError::from(*code))),
+                _ => None,
+            })
+            .await
         } else {
             Err(CommyError::ConnectionLost(
                 "Connection lost during create_service".to_string(),
@@ -403,22 +409,24 @@ impl Client {
         })
         .await?;
 
-        // Wait for service response
+        // Wait for the reply that names this service (see `create_service`).
         if let Some(conn) = &*self.connection.read().await {
-            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
-                Ok(Ok(Some(ServerMessage::Service {
+            recv_matching(conn, Duration::from_secs(10), |m| match m {
+                ServerMessage::Service {
                     service_id,
-                    service_name,
-                    tenant_id: resp_tenant,
+                    service_name: n,
+                    tenant_id: t,
                     file_path,
-                }))) => {
-                    let service = Service::new(service_id, service_name, resp_tenant, file_path);
-                    Ok(service)
-                }
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
-                Err(_) => Err(CommyError::Timeout),
-                _ => Err(CommyError::Timeout),
-            }
+                } if n == service_name && t == tenant_id => Some(Ok(Service::new(
+                    service_id.clone(),
+                    n.clone(),
+                    t.clone(),
+                    file_path.clone(),
+                ))),
+                ServerMessage::Error { code, .. } => Some(Err(CommyError::from(*code))),
+                _ => None,
+            })
+            .await
         } else {
             Err(CommyError::ConnectionLost(
                 "Connection lost during get_service".to_string(),
@@ -489,23 +497,25 @@ impl Client {
         })
         .await?;
 
-        // Wait for result
+        // Wait for the result that names this tenant (see `create_service`).
         if let Some(conn) = &*self.connection.read().await {
-            match tokio::time::timeout(Duration::from_secs(10), conn.recv()).await {
-                Ok(Ok(Some(ServerMessage::TenantResult {
+            recv_matching(conn, Duration::from_secs(10), |m| match m {
+                ServerMessage::TenantResult {
                     success: true,
                     tenant_id: returned_id,
                     ..
-                }))) => Ok(returned_id),
-                Ok(Ok(Some(ServerMessage::TenantResult {
+                } if returned_id == tenant_id => Some(Ok(returned_id.clone())),
+                ServerMessage::TenantResult {
                     success: false,
+                    tenant_id: returned_id,
                     message,
-                    ..
-                }))) => Err(CommyError::PermissionDenied(message)),
-                Ok(Ok(Some(ServerMessage::Error { code, .. }))) => Err(CommyError::from(code)),
-                Err(_) => Err(CommyError::Timeout),
-                _ => Err(CommyError::Timeout),
-            }
+                } if returned_id == tenant_id => {
+                    Some(Err(CommyError::PermissionDenied(message.clone())))
+                }
+                ServerMessage::Error { code, .. } => Some(Err(CommyError::from(*code))),
+                _ => None,
+            })
+            .await
         } else {
             Err(CommyError::ConnectionLost(
                 "Connection lost during create_tenant".to_string(),
@@ -1633,6 +1643,27 @@ impl Client {
                 vec!["read".to_string(), "write".to_string()],
             ),
         );
+    }
+}
+
+/// Receive until `pick` accepts a message, discarding the ones it does not (a late reply to an
+/// earlier call that timed out, or a push that is not for this call). `None` from `pick` means
+/// "not mine"; the whole wait is bounded by `wait` and ends in `Timeout`.
+async fn recv_matching<T>(
+    conn: &Connection,
+    wait: Duration,
+    mut pick: impl FnMut(&ServerMessage) -> Option<Result<T>>,
+) -> Result<T> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        match tokio::time::timeout_at(deadline, conn.recv()).await {
+            Ok(Ok(Some(msg))) => {
+                if let Some(r) = pick(&msg) {
+                    return r;
+                }
+            }
+            _ => return Err(CommyError::Timeout),
+        }
     }
 }
 
@@ -3746,5 +3777,68 @@ mod grant_tests {
             c.grant("bob", None, &["tenant:read"]).await,
             Err(CommyError::PermissionDenied(_))
         ));
+    }
+
+    fn service_reply(name: &str) -> crate::message::ServerMessage {
+        crate::message::ServerMessage::Service {
+            service_id: format!("id-{name}"),
+            service_name: name.to_string(),
+            tenant_id: "tenant_a".to_string(),
+            file_path: None,
+        }
+    }
+
+    /// audit-3: the replies carry no request id, so a late reply to an earlier call (queued ahead
+    /// of the real one) must not be returned as the answer to the next call.
+    #[tokio::test]
+    async fn test_get_service_skips_a_stale_reply_for_another_service() {
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        server_tx.send(service_reply("old")).unwrap();
+        server_tx.send(service_reply("new")).unwrap();
+        let client = Client::new("wss://test");
+        client.inject_auth_for_test("tenant_a").await;
+        client.inject_connection_for_test(conn).await;
+        let svc = client.get_service("tenant_a", "new").await.unwrap();
+        assert_eq!(svc.id, "id-new", "got the stale reply meant for 'old'");
+    }
+
+    /// audit-3: `create_service` used to return whichever `Service` came first.
+    #[tokio::test]
+    async fn test_create_service_skips_a_stale_reply_for_another_service() {
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        server_tx.send(service_reply("old")).unwrap();
+        server_tx.send(service_reply("new")).unwrap();
+        let client = Client::new("wss://test");
+        client.inject_auth_for_test("tenant_a").await;
+        client.inject_connection_for_test(conn).await;
+        let id = client
+            .create_service("tenant_a", "new", 4096)
+            .await
+            .unwrap();
+        assert_eq!(id, "id-new");
+    }
+
+    /// audit-3: `create_tenant` used to take a stale refusal for another tenant as its own.
+    #[tokio::test]
+    async fn test_create_tenant_skips_a_stale_reply_for_another_tenant() {
+        let (conn, server_tx, _client_rx) = crate::connection::Connection::new_for_test();
+        server_tx
+            .send(crate::message::ServerMessage::TenantResult {
+                success: false,
+                tenant_id: "old".to_string(),
+                message: "denied".to_string(),
+            })
+            .unwrap();
+        server_tx
+            .send(crate::message::ServerMessage::TenantResult {
+                success: true,
+                tenant_id: "new".to_string(),
+                message: "created".to_string(),
+            })
+            .unwrap();
+        let client = Client::new("wss://test");
+        client.inject_auth_for_test("admin").await;
+        client.inject_connection_for_test(conn).await;
+        assert_eq!(client.create_tenant("new", "New").await.unwrap(), "new");
     }
 }
