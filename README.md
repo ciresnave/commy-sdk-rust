@@ -12,7 +12,7 @@ minor version may break the API (see [CHANGELOG.md](CHANGELOG.md)). What has bee
 
 ```toml
 [dependencies]
-commy-sdk-rust = "0.17"
+commy-sdk-rust = "0.18"
 tokio = { version = "1", features = ["full"] }
 ```
 

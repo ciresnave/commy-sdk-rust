@@ -4,6 +4,17 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [Unreleased]
+
+## [0.18.1] - 2026-11-16
+
+### Fixed
+
+- `create_service`, `get_service` and `create_tenant` took the next reply that arrived as their own, so a late reply to an earlier
+  call (one that timed out) was returned as the answer to the next one (ROADMAP `audit-3`). The server's replies to these calls carry
+  no request id, so each now waits for the reply that names its service or tenant and discards the others. `delete_service`,
+  `delete_tenant` and `heartbeat` are unchanged: their replies name nothing to match on.
+
 ## [0.18.0]
 
 ### Removed (Breaking)
