@@ -6,6 +6,8 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-16
+
 ### Fixed
 
 - `create_service`, `get_service` and `create_tenant` took the next reply that arrived as their own, so a late reply to an earlier
