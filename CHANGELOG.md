@@ -8,8 +8,12 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ## [0.19.0] - 2026-11-17 - Breaking
 
-### Fixed
+### Fixed (Breaking)
 
+- **Migration:** `ClientMessage` and `ServerMessage` are public and not `#[non_exhaustive]`, so the new `request_id` fields break code
+  that builds or matches these variants. Add `request_id: None` where you construct `ClientMessage::{CreateTenant, DeleteTenant,
+  CreateService, GetService, DeleteService, Heartbeat}` or `ServerMessage::{Service, TenantResult, Heartbeat}`, and `..` where you
+  match them without `..`. Code that only calls `Client` and `Session` methods is unaffected.
 - `delete_service`, `delete_tenant` and `heartbeat` (and, with `create_service`, `get_service` and `create_tenant`) now send a
   `request_id` and take the reply that echoes it (commy 0.27.14 and later echo it for `Result`, `Service`, `TenantResult`,
   `Heartbeat` and `Error`). A late reply to a call that timed out is no longer taken for the answer to the next call
