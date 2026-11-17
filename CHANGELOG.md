@@ -6,6 +6,16 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ## [Unreleased]
 
+### Fixed
+
+- `delete_service`, `delete_tenant` and `heartbeat` (and, with `create_service`, `get_service` and `create_tenant`) now send a
+  `request_id` and take the reply that echoes it (commy 0.27.14 and later echo it for `Result`, `Service`, `TenantResult`,
+  `Heartbeat` and `Error`). A late reply to a call that timed out is no longer taken for the answer to the next call
+  (ROADMAP `audit-3`). Against a server that does not echo, the name matching of 0.18.1 still applies, and a `Result` whose id
+  is not one of this client's abandoned calls is accepted. The `ClientMessage` variants and the `ServerMessage::Service`,
+  `TenantResult` and `Heartbeat` variants gained a `request_id: Option<String>` field.
+- CI only: the e2e job builds commy 0.27.14 (`a5dce76e`; was 0.22.3).
+
 ## [0.18.1] - 2026-11-16
 
 ### Fixed

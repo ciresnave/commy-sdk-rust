@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ciresnave/commy
-          ref: a79f20d98de2a796b25c7de9930a11cb01f38a9e # commy 0.22.3
+          ref: a5dce76ee57aeb755ae5d84554e19254e618027d # commy 0.27.14
           path: commy
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
@@ -88,7 +88,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ciresnave/commy
-          ref: a79f20d98de2a796b25c7de9930a11cb01f38a9e # commy 0.22.3
+          ref: a5dce76ee57aeb755ae5d84554e19254e618027d # commy 0.27.14
           path: commy
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
