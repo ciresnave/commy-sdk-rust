@@ -14,10 +14,18 @@ pub enum ClientMessage {
     CreateTenant {
         tenant_id: String,
         tenant_name: String,
+        /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 
     /// Delete a tenant (admin operation)
-    DeleteTenant { tenant_id: String },
+    DeleteTenant {
+        tenant_id: String,
+        /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
 
     /// Create a new service
     CreateService {
@@ -25,22 +33,36 @@ pub enum ClientMessage {
         service_name: String,
         /// File size in bytes (the server rounds up to whole pages and caps it).
         size: u64,
+        /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 
     /// Get existing service (errors if not found)
     GetService {
         tenant_id: String,
         service_name: String,
+        /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 
     /// Delete a service
     DeleteService {
         tenant_id: String,
         service_name: String,
+        /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 
     /// Heartbeat/keepalive
-    Heartbeat { client_id: String },
+    Heartbeat {
+        client_id: String,
+        /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
 
     /// Disconnect gracefully
     Disconnect { client_id: String },
@@ -103,6 +125,9 @@ pub enum ServerMessage {
         tenant_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         file_path: Option<String>,
+        /// The request this answers, when the server echoes it (commy 0.27.14 and later).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 
     /// Tenant created or retrieved
@@ -116,6 +141,9 @@ pub enum ServerMessage {
         success: bool,
         tenant_id: String,
         message: String,
+        /// The request this answers, when the server echoes it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 
     /// Operation result
@@ -185,7 +213,12 @@ pub enum ServerMessage {
     ConfirmLocalAck(commy_wire::ConfirmLocalAck),
 
     /// Heartbeat response (keep-alive)
-    Heartbeat { timestamp: String },
+    Heartbeat {
+        timestamp: String,
+        /// The heartbeat this answers, when the server echoes it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
 }
 
 /// Explicit error codes for API responses. Serialized `SCREAMING_SNAKE_CASE` (the commy-wire spelling);
@@ -459,6 +492,7 @@ mod tests {
     fn test_client_message_heartbeat_serialization() {
         let msg = ClientMessage::Heartbeat {
             client_id: "c1".to_string(),
+            request_id: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
@@ -620,11 +654,13 @@ mod tests {
         let msg = ClientMessage::CreateTenant {
             tenant_id: "t1".to_string(),
             tenant_name: "Tenant One".to_string(),
+            request_id: None,
         };
         match round_trip_client(msg) {
             ClientMessage::CreateTenant {
                 tenant_id,
                 tenant_name,
+                request_id: _,
             } => {
                 assert_eq!(tenant_id, "t1");
                 assert_eq!(tenant_name, "Tenant One");
@@ -637,9 +673,13 @@ mod tests {
     fn test_client_message_delete_tenant_round_trip() {
         let msg = ClientMessage::DeleteTenant {
             tenant_id: "t2".to_string(),
+            request_id: None,
         };
         match round_trip_client(msg) {
-            ClientMessage::DeleteTenant { tenant_id } => assert_eq!(tenant_id, "t2"),
+            ClientMessage::DeleteTenant {
+                tenant_id,
+                request_id: _,
+            } => assert_eq!(tenant_id, "t2"),
             _ => panic!("Wrong variant"),
         }
     }
@@ -709,12 +749,14 @@ mod tests {
             success: true,
             tenant_id: "t2".to_string(),
             message: "Tenant created".to_string(),
+            request_id: None,
         };
         match round_trip_server(msg) {
             ServerMessage::TenantResult {
                 success,
                 tenant_id,
                 message,
+                request_id: _,
             } => {
                 assert!(success);
                 assert_eq!(tenant_id, "t2");
@@ -761,9 +803,13 @@ mod tests {
     fn test_server_message_heartbeat_round_trip() {
         let msg = ServerMessage::Heartbeat {
             timestamp: "2025-01-01T00:00:00Z".to_string(),
+            request_id: None,
         };
         match round_trip_server(msg) {
-            ServerMessage::Heartbeat { timestamp } => {
+            ServerMessage::Heartbeat {
+                timestamp,
+                request_id: _,
+            } => {
                 assert_eq!(timestamp, "2025-01-01T00:00:00Z");
             }
             _ => panic!("Wrong variant"),

@@ -324,6 +324,7 @@ mod tests {
                 service_name: "cfg".to_string(),
                 tenant_id: "tenant_x".to_string(),
                 file_path: None,
+                request_id: None,
             },
         )
         .await;
@@ -336,6 +337,7 @@ mod tests {
                 tenant_id,
                 service_name,
                 size,
+                request_id: _,
             } => {
                 assert_eq!(tenant_id, "tenant_x");
                 assert_eq!(service_name, "cfg");

@@ -62,6 +62,7 @@ async fn test_create_service_message_format() {
         tenant_id: "org_a".to_string(),
         service_name: "config".to_string(),
         size: 65536,
+        request_id: None,
     };
 
     println!("CreateService message format:");
@@ -89,6 +90,7 @@ async fn test_get_service_message_format() {
     let msg = ClientMessage::GetService {
         tenant_id: "org_a".to_string(),
         service_name: "config".to_string(),
+        request_id: None,
     };
 
     println!("GetService message format:");
@@ -112,6 +114,7 @@ async fn test_delete_service_message_format() {
     let msg = ClientMessage::DeleteService {
         tenant_id: "org_a".to_string(),
         service_name: "config".to_string(),
+        request_id: None,
     };
 
     println!("DeleteService message format:");
@@ -166,6 +169,7 @@ async fn test_service_response_message() {
         service_name: "config".to_string(),
         tenant_id: "org_a".to_string(),
         file_path: None,
+        request_id: None,
     };
 
     println!("Service response message format:");
@@ -376,6 +380,7 @@ fn test_message_serialization_round_trip() {
         tenant_id: "org_a".to_string(),
         service_name: "config".to_string(),
         size: 65536,
+        request_id: None,
     };
 
     // Serialize to JSON

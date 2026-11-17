@@ -14,6 +14,7 @@ fn test_server_response_format_service_created() {
         service_name: "app_config".to_string(),
         tenant_id: "org_tenant".to_string(),
         file_path: None,
+        request_id: None,
     };
 
     let json = serde_json::to_string(&response).expect("Should serialize");
@@ -111,6 +112,7 @@ fn test_create_service_request_structure() {
         tenant_id: "my_tenant".to_string(),
         service_name: "my_service".to_string(),
         size: 65536,
+        request_id: None,
     };
 
     let json = serde_json::to_string(&request).expect("Should serialize");
@@ -128,6 +130,7 @@ fn test_get_service_request_structure() {
     let request = ClientMessage::GetService {
         tenant_id: "my_tenant".to_string(),
         service_name: "my_service".to_string(),
+        request_id: None,
     };
 
     let json = serde_json::to_string(&request).expect("Should serialize");
@@ -145,6 +148,7 @@ fn test_delete_service_request_structure() {
     let request = ClientMessage::DeleteService {
         tenant_id: "my_tenant".to_string(),
         service_name: "my_service".to_string(),
+        request_id: None,
     };
 
     let json = serde_json::to_string(&request).expect("Should serialize");
@@ -277,6 +281,7 @@ fn test_service_response_contains_required_fields() {
         service_name: "my_service".to_string(),
         tenant_id: "my_tenant".to_string(),
         file_path: None,
+        request_id: None,
     };
 
     let json = serde_json::to_string(&service).expect("Should serialize");

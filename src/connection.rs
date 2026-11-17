@@ -288,6 +288,7 @@ mod tests {
 
         conn.send(ClientMessage::Heartbeat {
             client_id: "test_client".to_string(),
+            request_id: None,
         })
         .await
         .expect("send should succeed");
@@ -309,6 +310,7 @@ mod tests {
         server_tx
             .send(ServerMessage::Heartbeat {
                 timestamp: "2025-01-01T00:00:00Z".to_string(),
+                request_id: None,
             })
             .expect("pre-loading message should succeed");
 
