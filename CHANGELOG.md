@@ -6,6 +6,8 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-17 - Breaking
+
 ### Fixed
 
 - `delete_service`, `delete_tenant` and `heartbeat` (and, with `create_service`, `get_service` and `create_tenant`) now send a
