@@ -221,6 +221,23 @@ pub enum ServerMessage {
     },
 }
 
+impl ServerMessage {
+    /// Is this a push about a shared file (not the reply to any call)? These are the messages
+    /// `Client::poll_shared_events` acts on; a call that is waiting for its own reply must keep them.
+    pub(crate) fn is_push(&self) -> bool {
+        matches!(
+            self,
+            ServerMessage::RangesUpdated(_)
+                | ServerMessage::Range(_)
+                | ServerMessage::RotationPending(_)
+                | ServerMessage::RotationPrepared(_)
+                | ServerMessage::RotationCommit(_)
+                | ServerMessage::RotationAborted(_)
+                | ServerMessage::Loss(_)
+        )
+    }
+}
+
 /// Explicit error codes for API responses. Serialized `SCREAMING_SNAKE_CASE` (the commy-wire spelling);
 /// the CamelCase spellings older server handlers still send are accepted when reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

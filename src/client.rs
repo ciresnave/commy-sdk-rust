@@ -779,7 +779,13 @@ impl Client {
                 }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
-                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(Some(m))) => {
+                    // Not this call's reply: a push is kept for `poll_shared_events`.
+                    if m.is_push() {
+                        conn.keep(m);
+                    }
+                    continue;
+                }
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
                         "Connection closed during negotiate_local".to_string(),
@@ -825,7 +831,13 @@ impl Client {
                     request_id: erid, ..
                 }))) if erid.as_deref().is_none_or(|e| e == confirm_id) => return Ok(stay_on_wss),
                 Err(_) => return Ok(stay_on_wss),
-                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(Some(m))) => {
+                    // Not this call's reply: a push is kept for `poll_shared_events`.
+                    if m.is_push() {
+                        conn.keep(m);
+                    }
+                    continue;
+                }
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
                         "Connection closed during negotiate_local".to_string(),
@@ -1002,7 +1014,13 @@ impl Client {
                         let _ = f.apply_inbound(&frame);
                     }
                 }
-                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(Some(m))) => {
+                    // Not this call's reply: a push is kept for `poll_shared_events`.
+                    if m.is_push() {
+                        conn.keep(m);
+                    }
+                    continue;
+                }
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
                         "Connection closed during flush_shared".to_string(),
@@ -1058,7 +1076,13 @@ impl Client {
                 }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
-                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(Some(m))) => {
+                    // Not this call's reply: a push is kept for `poll_shared_events`.
+                    if m.is_push() {
+                        conn.keep(m);
+                    }
+                    continue;
+                }
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
                         "Connection closed during open_remote".to_string(),
@@ -1110,14 +1134,18 @@ impl Client {
                 "Connection lost during poll_shared_events".to_string(),
             ));
         };
-        let msg = match tokio::time::timeout(wait, conn.recv()).await {
-            Ok(Ok(Some(m))) => m,
-            Ok(Ok(None)) | Ok(Err(_)) => {
-                return Err(CommyError::ConnectionLost(
-                    "Connection closed during poll_shared_events".to_string(),
-                ))
-            }
-            Err(_) => return Ok(SharedEvent::None),
+        // Pushes a call kept while it waited are older than anything still in the queue.
+        let msg = match conn.take_kept() {
+            Some(m) => m,
+            None => match tokio::time::timeout(wait, conn.recv()).await {
+                Ok(Ok(Some(m))) => m,
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    return Err(CommyError::ConnectionLost(
+                        "Connection closed during poll_shared_events".to_string(),
+                    ))
+                }
+                Err(_) => return Ok(SharedEvent::None),
+            },
         };
         drop(guard);
         Ok(self.apply_event(msg).await)
@@ -1274,7 +1302,13 @@ impl Client {
                 }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
-                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(Some(m))) => {
+                    // Not this call's reply: a push is kept for `poll_shared_events`.
+                    if m.is_push() {
+                        conn.keep(m);
+                    }
+                    continue;
+                }
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
                         "Connection closed during a grant request".to_string(),
@@ -1325,7 +1359,13 @@ impl Client {
                 }))) if erid.as_deref().is_none_or(|e| e == request_id) => {
                     return Err(CommyError::from(code))
                 }
-                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(Some(m))) => {
+                    // Not this call's reply: a push is kept for `poll_shared_events`.
+                    if m.is_push() {
+                        conn.keep(m);
+                    }
+                    continue;
+                }
                 Ok(Ok(None)) | Ok(Err(_)) => {
                     return Err(CommyError::ConnectionLost(
                         "Connection closed during request_rotation".to_string(),
@@ -1708,6 +1748,11 @@ async fn recv_matching<T>(
             Ok(Ok(Some(msg))) => {
                 if let Some(r) = pick(&msg) {
                     return r;
+                }
+                // Not this call's reply. A push is for `poll_shared_events`: keep it. A reply to
+                // another call is dropped.
+                if msg.is_push() {
+                    conn.keep(msg);
                 }
             }
             _ => return Err(CommyError::Timeout),
@@ -4063,5 +4108,114 @@ mod grant_tests {
                 ..
             }
         ));
+    }
+
+    // ── issue #60: a push that arrives while a call waits is kept, not discarded ──────────────
+
+    fn push_pending(rid: &str) -> crate::message::ServerMessage {
+        crate::message::ServerMessage::RotationPending(commy_wire::RotationPending {
+            rotation_id: rid.to_string(),
+            service_id: "svc".to_string(),
+            file_id: 5,
+            deadline_ms: 400,
+            fill_ms: 400,
+        })
+    }
+
+    /// A push that arrives between a call and its reply is still there for the next poll.
+    #[tokio::test]
+    async fn test_a_push_arriving_during_a_heartbeat_wait_is_still_delivered() {
+        let (client, server_tx, mut client_rx) = echo_rig().await;
+        let c = client.clone();
+        let h = tokio::spawn(async move { c.heartbeat().await });
+        let id = sent_id(client_rx.recv().await);
+        server_tx.send(push_pending("r1")).unwrap();
+        server_tx
+            .send(crate::message::ServerMessage::Heartbeat {
+                timestamp: "t".to_string(),
+                request_id: Some(id),
+            })
+            .unwrap();
+        h.await.unwrap().unwrap();
+        match client
+            .poll_shared_events(Duration::from_millis(50))
+            .await
+            .unwrap()
+        {
+            SharedEvent::RotationPending(p) => assert_eq!(p.rotation_id, "r1"),
+            other => panic!("the push was lost: {other:?}"),
+        }
+    }
+
+    /// Several pushes kept across a wait come back in the order they arrived, before anything newer.
+    #[tokio::test]
+    async fn test_kept_pushes_are_delivered_in_arrival_order_before_newer_ones() {
+        let (client, server_tx, mut client_rx) = echo_rig().await;
+        let c = client.clone();
+        let h = tokio::spawn(async move { c.delete_tenant("tenant_a").await });
+        let id = sent_id(client_rx.recv().await);
+        server_tx.send(push_pending("r1")).unwrap();
+        server_tx.send(push_pending("r2")).unwrap();
+        server_tx.send(result_reply(&id, true)).unwrap();
+        h.await.unwrap().unwrap();
+        server_tx.send(push_pending("r3")).unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            if let SharedEvent::RotationPending(p) = client
+                .poll_shared_events(Duration::from_millis(50))
+                .await
+                .unwrap()
+            {
+                seen.push(p.rotation_id);
+            }
+        }
+        assert_eq!(seen, ["r1", "r2", "r3"]);
+    }
+
+    /// A reply that echoes another request is still dropped, not kept as if it were a push.
+    #[tokio::test]
+    async fn test_a_stale_reply_is_not_kept_as_a_push() {
+        let (client, server_tx, mut client_rx) = echo_rig().await;
+        let c = client.clone();
+        let h = tokio::spawn(async move { c.delete_tenant("tenant_a").await });
+        let id = sent_id(client_rx.recv().await);
+        server_tx
+            .send(crate::message::ServerMessage::Error {
+                code: crate::message::ErrorCode::NotFound,
+                message: "m".to_string(),
+                request_id: Some("someone-else".to_string()),
+            })
+            .unwrap();
+        server_tx.send(result_reply(&id, true)).unwrap();
+        h.await.unwrap().unwrap();
+        let e = client
+            .poll_shared_events(Duration::from_millis(30))
+            .await
+            .unwrap();
+        assert!(matches!(e, SharedEvent::None), "kept a stale reply: {e:?}");
+    }
+
+    /// The older waits keep pushes too (here `grant`).
+    #[tokio::test]
+    async fn test_a_push_arriving_during_a_grant_wait_is_still_delivered() {
+        let (client, server_tx, mut client_rx) = echo_rig().await;
+        let c = client.clone();
+        let h = tokio::spawn(async move { c.grant("bob", None, &["tenant:read"]).await });
+        let id = match client_rx.recv().await {
+            Some(crate::message::ClientMessage::Grant(g)) => g.request_id,
+            other => panic!("unexpected {other:?}"),
+        };
+        server_tx.send(push_pending("r1")).unwrap();
+        server_tx
+            .send(crate::message::ServerMessage::GrantAck(
+                commy_wire::GrantAck { request_id: id },
+            ))
+            .unwrap();
+        h.await.unwrap().unwrap();
+        let e = client
+            .poll_shared_events(Duration::from_millis(50))
+            .await
+            .unwrap();
+        assert!(matches!(e, SharedEvent::RotationPending(_)), "lost: {e:?}");
     }
 }

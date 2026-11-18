@@ -4,7 +4,13 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
-## [Unreleased]
+## [0.19.1] - 2026-11-18
+
+### Fixed
+
+- A push about a shared file (`RangesUpdated`, range frames, `Loss`, the rotation messages) that arrived while a call waited for its reply was
+  discarded: a mirror or a rotation could miss an update with nothing reported (#60). The waiting call now keeps the push and
+  `poll_shared_events` / `poll_shared_updates` deliver it first, in arrival order. A reply to another call is still dropped.
 
 ## [0.19.0] - 2026-11-17 - Breaking
 
