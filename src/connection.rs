@@ -77,6 +77,9 @@ pub struct Connection {
     state: Arc<RwLock<ConnectionState>>,
     tx: mpsc::UnboundedSender<ClientMessage>,
     rx: Arc<RwLock<mpsc::UnboundedReceiver<ServerMessage>>>,
+    /// Pushes a waiting call read but did not want, oldest first; `poll_shared_events` takes them
+    /// before anything newer in `rx`.
+    kept: Arc<std::sync::Mutex<std::collections::VecDeque<ServerMessage>>>,
 }
 
 impl Connection {
@@ -121,6 +124,7 @@ impl Connection {
             state: Arc::new(RwLock::new(ConnectionState::Connected)),
             tx,
             rx: Arc::new(RwLock::new(server_rx)),
+            kept: Arc::default(),
         })
     }
 
@@ -136,6 +140,18 @@ impl Connection {
     pub async fn recv(&self) -> Result<Option<ServerMessage>> {
         let mut rx = self.rx.write().await;
         Ok(rx.recv().await)
+    }
+
+    /// Keep a push that a waiting call read but is not its reply, for `take_kept`.
+    pub(crate) fn keep(&self, msg: ServerMessage) {
+        if let Ok(mut q) = self.kept.lock() {
+            q.push_back(msg);
+        }
+    }
+
+    /// The oldest kept push, if any.
+    pub(crate) fn take_kept(&self) -> Option<ServerMessage> {
+        self.kept.lock().ok().and_then(|mut q| q.pop_front())
     }
 
     /// Get current connection state
@@ -162,6 +178,7 @@ impl Connection {
             state: Arc::new(RwLock::new(ConnectionState::Connected)),
             tx: client_outbound_tx,
             rx: Arc::new(RwLock::new(server_inbound_rx)),
+            kept: Arc::default(),
         };
 
         (conn, server_inbound_tx, client_outbound_rx)
