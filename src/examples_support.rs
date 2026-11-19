@@ -86,9 +86,7 @@ impl CommyServer {
 
         // Generate TLS certificates if needed
         if !self.config.cert_path.exists() || !self.config.key_path.exists() {
-            println!("🔐 Generating TLS certificates...");
-            self.generate_self_signed_cert()?;
-            println!("✅ Generated certificates");
+            self.missing_tls_files()?;
         } else {
             println!("✓ TLS certificates already present");
         }
@@ -129,33 +127,15 @@ impl CommyServer {
         }
     }
 
-    /// Generate self-signed TLS certificate
-    fn generate_self_signed_cert(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // Create a self-signed certificate using openssl
-        // For example purposes, we create basic certs
-
-        let cert_path = &self.config.cert_path;
-        let key_path = &self.config.key_path;
-
-        // This is a simplified approach - in production you'd use proper cert generation
-        // For now, we create placeholder cert/key files
-        // You would typically use rustls_pemfile or similar for real cert generation
-
-        fs::write(
-            key_path,
-            "-----BEGIN PRIVATE KEY-----\n\
-            (This would be your actual private key)\n\
-            -----END PRIVATE KEY-----",
-        )?;
-
-        fs::write(
-            cert_path,
-            "-----BEGIN CERTIFICATE-----\n\
-            (This would be your actual certificate)\n\
-            -----END CERTIFICATE-----",
-        )?;
-
-        Ok(())
+    /// The server needs a TLS certificate and key. This helper does not make them: it fails with
+    /// the files it expects, so nothing that looks like a key or certificate is ever written.
+    fn missing_tls_files(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err(format!(
+            "no TLS certificate or key found: put a certificate at {} and its private key at {} (a self-signed pair from `openssl req -x509 -newkey rsa:2048 -nodes` works locally)",
+            self.config.cert_path.display(),
+            self.config.key_path.display()
+        )
+        .into())
     }
 
     /// Start the Commy server
