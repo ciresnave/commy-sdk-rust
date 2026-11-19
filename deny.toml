@@ -4,11 +4,7 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = [
-    # chrono unmaintained (no known vulnerability, no fix): a direct public-API dependency. Dated ignore, expires 2026-12-17
-    # (CireSnave standing OK 2026-11-18, via PM): remove when the scheduled Breaking row drop-chrono lands, or renew with a reason.
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (no known vulnerability) and is a direct public-API dependency; removal is the scheduled Breaking row drop-chrono; expires 2026-12-17" },
-]
+ignore = []
 
 [licenses]
 version = 2

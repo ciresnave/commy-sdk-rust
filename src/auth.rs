@@ -8,7 +8,7 @@ pub use crate::message::{AuthCredentials, Secret};
 pub struct AuthContext {
     pub tenant_id: String,
     pub permissions: Vec<String>,
-    pub authenticated_at: chrono::DateTime<chrono::Utc>,
+    pub authenticated_at: jiff::Timestamp,
 }
 
 impl AuthContext {
@@ -17,7 +17,7 @@ impl AuthContext {
         Self {
             tenant_id,
             permissions,
-            authenticated_at: chrono::Utc::now(),
+            authenticated_at: jiff::Timestamp::now(),
         }
     }
 

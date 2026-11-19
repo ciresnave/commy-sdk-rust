@@ -171,7 +171,7 @@ mod tests {
             offset: 0,
             size: 8,
             version: 1,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
         svc.add_variable(meta);
 
@@ -195,7 +195,7 @@ mod tests {
             offset: 0,
             size: 4,
             version: 1,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
         svc.add_variable(meta);
         assert_eq!(svc.variables().len(), 1);
@@ -210,7 +210,7 @@ mod tests {
             offset: 0,
             size: 4,
             version: 1,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         });
         assert!(!svc.variables().is_empty());
         svc.clear_variables();
@@ -376,7 +376,7 @@ mod tests {
             offset: 0,
             size: 4,
             version: 1,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
         let meta2 = crate::message::VariableMetadata {
             name: "my_var".to_string(),
@@ -384,7 +384,7 @@ mod tests {
             offset: 0,
             size: 8,
             version: 2,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
         svc.add_variable(meta1);
         svc.add_variable(meta2);

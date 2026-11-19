@@ -30,7 +30,7 @@ pub struct ClientState {
     pub server_version: Option<String>,
 
     /// Last activity timestamp
-    pub last_activity: chrono::DateTime<chrono::Utc>,
+    pub last_activity: jiff::Timestamp,
 }
 
 impl ClientState {
@@ -43,19 +43,20 @@ impl ClientState {
             session_id: None,
             client_id,
             server_version: None,
-            last_activity: chrono::Utc::now(),
+            last_activity: jiff::Timestamp::now(),
         }
     }
 
     /// Update last activity time
     pub fn touch(&mut self) {
-        self.last_activity = chrono::Utc::now();
+        self.last_activity = jiff::Timestamp::now();
     }
 
     /// Get idle duration in seconds
     pub fn idle_seconds(&self) -> u64 {
-        (chrono::Utc::now() - self.last_activity)
-            .num_seconds()
+        jiff::Timestamp::now()
+            .duration_since(self.last_activity)
+            .as_secs()
             .max(0) as u64
     }
 
@@ -95,7 +96,7 @@ impl ClientState {
         self.session_id = None;
         self.auth_contexts.clear();
         self.services.clear();
-        self.last_activity = chrono::Utc::now();
+        self.last_activity = jiff::Timestamp::now();
     }
 }
 
@@ -121,7 +122,7 @@ mod tests {
     #[test]
     fn test_idle_calculation() {
         let mut state = ClientState::new("client_1".to_string());
-        state.last_activity = chrono::Utc::now() - chrono::Duration::seconds(10);
+        state.last_activity = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(10);
         assert!(state.idle_seconds() >= 10);
     }
 
@@ -138,7 +139,7 @@ mod tests {
     #[test]
     fn test_touch_updates_activity() {
         let mut state = ClientState::new("client_1".to_string());
-        state.last_activity = chrono::Utc::now() - chrono::Duration::seconds(60);
+        state.last_activity = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(60);
         assert!(state.idle_seconds() >= 60);
         state.touch();
         assert!(state.idle_seconds() < 5);

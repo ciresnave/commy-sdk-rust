@@ -4,6 +4,15 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.20.0] - 2026-11-19 - Breaking
+
+### Changed (Breaking)
+
+- `chrono` is replaced by `jiff` (RUSTSEC-2026-0543: `chrono` is unmaintained). **Migration:** `AuthContext::authenticated_at`,
+  `VariableMetadata::created_at` and `ClientState::last_activity` are now `jiff::Timestamp` instead of `chrono::DateTime<chrono::Utc>`;
+  build one with `jiff::Timestamp::now()` or `"2026-11-19T01:02:03Z".parse()`. The serde form is unchanged: an RFC 3339 UTC string.
+  `cargo deny` no longer needs the `RUSTSEC-2026-0543` ignore, which is removed from `deny.toml`.
+
 ## [0.19.2] - 2026-11-19
 
 ### Fixed

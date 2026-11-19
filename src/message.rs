@@ -361,7 +361,7 @@ pub struct VariableMetadata {
     pub offset: u64,
     pub size: u64,
     pub version: u64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 
 impl From<&AuthCredentials> for commy_wire::Credentials {
@@ -909,5 +909,26 @@ mod tests {
                 "{spelling} -> {m:?}"
             );
         }
+    }
+
+    /// `created_at` keeps the RFC 3339 UTC text `chrono` wrote, so stored or relayed values still parse.
+    #[test]
+    fn test_variable_metadata_created_at_is_rfc3339_utc() {
+        let m = VariableMetadata {
+            name: "n".into(),
+            service_id: "s".into(),
+            offset: 0,
+            size: 1,
+            version: 1,
+            created_at: "2026-11-19T01:02:03Z".parse().unwrap(),
+        };
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["created_at"], "2026-11-19T01:02:03Z");
+        let parsed: VariableMetadata = serde_json::from_value(serde_json::json!({
+            "name": "n", "service_id": "s", "offset": 0, "size": 1, "version": 1,
+            "created_at": "2026-11-19T01:02:03.123456789Z"
+        }))
+        .unwrap();
+        assert_eq!(parsed.created_at.subsec_nanosecond(), 123_456_789);
     }
 }
