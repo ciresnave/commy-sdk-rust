@@ -1006,7 +1006,8 @@ impl Client {
                 }
                 Ok(Ok(Some(ServerMessage::RangesUpdated(u)))) => {
                     if let Some(f) = self.shared.write().await.get_mut(service_id) {
-                        f.on_ranges_updated(&u);
+                        // The count of re-baselined ranges is not needed while a call waits.
+                        let _ = f.on_ranges_updated(&u);
                     }
                 }
                 Ok(Ok(Some(ServerMessage::Range(frame)))) => {

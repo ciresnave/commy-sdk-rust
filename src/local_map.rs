@@ -338,7 +338,8 @@ mod tests {
             FallbackReason::NonceTooLarge
         );
         std::fs::write(&n, vec![b'a'; MAX_NONCE_BYTES as usize]).unwrap();
-        local(LocalMap::open(&f, &n));
+        // A nonce of exactly the maximum size still maps.
+        let _mapped = local(LocalMap::open(&f, &n));
     }
 
     #[cfg(unix)]
