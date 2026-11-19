@@ -496,7 +496,7 @@ mod tests {
             client_id: Some("c1".to_string()),
             dev_scopes: None,
             credentials: (&AuthCredentials::ApiKey {
-                key: "secret".into(),
+                key: "test-api-key".into(),
             })
                 .into(),
         });
@@ -587,9 +587,9 @@ mod tests {
             (
                 AuthCredentials::Basic {
                     username: "alice".into(),
-                    password: "hunter2-SECRET".into(),
+                    password: "not-a-real-password".into(),
                 },
-                "hunter2-SECRET",
+                "not-a-real-password",
             ),
             (
                 AuthCredentials::ApiKey {

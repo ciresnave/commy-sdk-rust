@@ -4,6 +4,14 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.19.2] - 2026-11-19
+
+### Fixed
+
+- The demo-server helper (`examples_support`) no longer writes placeholder text shaped like a PEM private key and certificate when none
+  exist; it fails with the two paths it expects. Nothing that looks like a key is written any more.
+- Test literals that looked like secrets are renamed, and two discarded return values are now explicit (`let _`). No behaviour change.
+
 ## [0.19.1] - 2026-11-18
 
 ### Fixed
