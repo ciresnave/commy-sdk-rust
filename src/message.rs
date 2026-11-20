@@ -58,6 +58,8 @@ pub enum ClientMessage {
 
     /// Heartbeat/keepalive
     Heartbeat {
+        /// Empty (and then not sent) when the caller names no client: the wire message needs no fields.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         client_id: String,
         /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,7 +67,11 @@ pub enum ClientMessage {
     },
 
     /// Disconnect gracefully
-    Disconnect { client_id: String },
+    Disconnect {
+        /// Empty (and then not sent) when the caller names no client: the wire message needs no fields.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        client_id: String,
+    },
 
     /// Ask whether a service file may be mapped locally (commy-wire local mapping handshake)
     GetServiceFilePath(commy_wire::GetServiceFilePath),
@@ -125,6 +131,9 @@ pub enum ServerMessage {
         tenant_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         file_path: Option<String>,
+        /// The file size in bytes, when the server reports it (the reply to a create does).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
         /// The request this answers, when the server echoes it (commy 0.27.14 and later).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
@@ -148,6 +157,8 @@ pub enum ServerMessage {
 
     /// Operation result
     Result {
+        /// The request this answers; empty when the server names none (a legacy reply).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         request_id: String,
         success: bool,
         message: String,
@@ -361,7 +372,7 @@ pub struct VariableMetadata {
     pub offset: u64,
     pub size: u64,
     pub version: u64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 
 impl From<&AuthCredentials> for commy_wire::Credentials {
@@ -909,5 +920,33 @@ mod tests {
                 "{spelling} -> {m:?}"
             );
         }
+    }
+
+    /// `created_at` keeps the RFC 3339 UTC text `chrono` wrote, so stored or relayed values still parse.
+    #[test]
+    fn test_variable_metadata_created_at_is_rfc3339_utc() {
+        let m = VariableMetadata {
+            name: "n".into(),
+            service_id: "s".into(),
+            offset: 0,
+            size: 1,
+            version: 1,
+            created_at: "2026-11-19T01:02:03Z".parse().unwrap(),
+        };
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["created_at"], "2026-11-19T01:02:03Z");
+        // A different instant must serialize as itself, so the output is not a constant.
+        let other = VariableMetadata {
+            created_at: "2027-03-04T05:06:07.5Z".parse().unwrap(),
+            ..m
+        };
+        let v = serde_json::to_value(&other).unwrap();
+        assert_eq!(v["created_at"], "2027-03-04T05:06:07.5Z");
+        let parsed: VariableMetadata = serde_json::from_value(serde_json::json!({
+            "name": "n", "service_id": "s", "offset": 0, "size": 1, "version": 1,
+            "created_at": "2026-11-19T01:02:03.123456789Z"
+        }))
+        .unwrap();
+        assert_eq!(parsed.created_at.subsec_nanosecond(), 123_456_789);
     }
 }
