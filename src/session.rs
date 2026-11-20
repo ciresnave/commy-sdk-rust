@@ -325,6 +325,7 @@ mod tests {
                 tenant_id: "tenant_x".to_string(),
                 file_path: None,
                 request_id: None,
+                size: None,
             },
         )
         .await;

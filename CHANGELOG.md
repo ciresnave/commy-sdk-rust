@@ -12,6 +12,13 @@ version is one number for the whole project, and while it is below 1.0 the minor
   `VariableMetadata::created_at` and `ClientState::last_activity` are now `jiff::Timestamp` instead of `chrono::DateTime<chrono::Utc>`;
   build one with `jiff::Timestamp::now()` or `"2026-11-19T01:02:03Z".parse()`. The serde form is unchanged: an RFC 3339 UTC string.
   `cargo deny` no longer needs the `RUSTSEC-2026-0543` ignore, which is removed from `deny.toml`.
+- `ServerMessage::Service` gains `size: Option<u64>` (the file size a create reply reports, commy-wire 0.5.1). A literal needs `size: None`.
+
+### Fixed
+
+- `commy-wire` is locked at 0.5.2. Its 0.5.1 vectors name legacy replies the SDK did not round-trip: a `Service` reply with `size`, a `Result` with
+  no `request_id`, and a `Heartbeat` or `Disconnect` with no fields. `ServerMessage::Result::request_id` and the `client_id` of
+  `ClientMessage::Heartbeat` / `Disconnect` now default to empty and are left out of the JSON when empty. `ReadAudit` / `AuditEvents` are listed as not carried.
 
 ## [0.19.2] - 2026-11-19
 

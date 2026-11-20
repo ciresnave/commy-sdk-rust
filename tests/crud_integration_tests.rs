@@ -170,6 +170,7 @@ async fn test_service_response_message() {
         tenant_id: "org_a".to_string(),
         file_path: None,
         request_id: None,
+        size: None,
     };
 
     println!("Service response message format:");

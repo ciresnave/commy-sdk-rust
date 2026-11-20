@@ -421,6 +421,7 @@ impl Client {
                 tenant_id: t,
                 file_path,
                 request_id: r,
+                ..
             } if is_reply(r, &id, || n == service_name && t == tenant_id) => Some(Ok(
                 Service::new(service_id.clone(), n.clone(), t.clone(), file_path.clone()),
             )),
@@ -2168,6 +2169,7 @@ mod tests {
                 tenant_id: "t1".to_string(),
                 file_path: None,
                 request_id: None,
+                size: None,
             })
             .expect("pre-send one response");
 
@@ -2406,6 +2408,7 @@ mod tests {
                 tenant_id: "tenant_x".to_string(),
                 file_path: None,
                 request_id: None,
+                size: None,
             },
         )
         .await;
@@ -2424,6 +2427,7 @@ mod tests {
                 tenant_id: "tenant_x".to_string(),
                 file_path: Some("/data/svc.mem".to_string()),
                 request_id: None,
+                size: None,
             },
         )
         .await;
@@ -3885,6 +3889,7 @@ mod grant_tests {
             tenant_id: "tenant_a".to_string(),
             file_path: None,
             request_id: None,
+            size: None,
         }
     }
 
@@ -3993,6 +3998,7 @@ mod grant_tests {
             tenant_id: "tenant_a".to_string(),
             file_path: None,
             request_id: Some(echo.to_string()),
+            size: None,
         };
         server_tx.send(reply("id-stale", "someone-else")).unwrap();
         server_tx.send(reply("id-mine", &id)).unwrap();

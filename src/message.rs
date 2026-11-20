@@ -58,6 +58,8 @@ pub enum ClientMessage {
 
     /// Heartbeat/keepalive
     Heartbeat {
+        /// Empty (and then not sent) when the caller names no client: the wire message needs no fields.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         client_id: String,
         /// The id the server echoes in its reply, so a reply is matched to this call (`None`: not sent).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,7 +67,11 @@ pub enum ClientMessage {
     },
 
     /// Disconnect gracefully
-    Disconnect { client_id: String },
+    Disconnect {
+        /// Empty (and then not sent) when the caller names no client: the wire message needs no fields.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        client_id: String,
+    },
 
     /// Ask whether a service file may be mapped locally (commy-wire local mapping handshake)
     GetServiceFilePath(commy_wire::GetServiceFilePath),
@@ -125,6 +131,9 @@ pub enum ServerMessage {
         tenant_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         file_path: Option<String>,
+        /// The file size in bytes, when the server reports it (the reply to a create does).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
         /// The request this answers, when the server echoes it (commy 0.27.14 and later).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
@@ -148,6 +157,8 @@ pub enum ServerMessage {
 
     /// Operation result
     Result {
+        /// The request this answers; empty when the server names none (a legacy reply).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         request_id: String,
         success: bool,
         message: String,

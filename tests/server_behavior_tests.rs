@@ -15,6 +15,7 @@ fn test_server_response_format_service_created() {
         tenant_id: "org_tenant".to_string(),
         file_path: None,
         request_id: None,
+        size: None,
     };
 
     let json = serde_json::to_string(&response).expect("Should serialize");
@@ -282,6 +283,7 @@ fn test_service_response_contains_required_fields() {
         tenant_id: "my_tenant".to_string(),
         file_path: None,
         request_id: None,
+        size: None,
     };
 
     let json = serde_json::to_string(&service).expect("Should serialize");
