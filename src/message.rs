@@ -935,6 +935,13 @@ mod tests {
         };
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["created_at"], "2026-11-19T01:02:03Z");
+        // A different instant must serialize as itself, so the output is not a constant.
+        let other = VariableMetadata {
+            created_at: "2027-03-04T05:06:07.5Z".parse().unwrap(),
+            ..m
+        };
+        let v = serde_json::to_value(&other).unwrap();
+        assert_eq!(v["created_at"], "2027-03-04T05:06:07.5Z");
         let parsed: VariableMetadata = serde_json::from_value(serde_json::json!({
             "name": "n", "service_id": "s", "offset": 0, "size": 1, "version": 1,
             "created_at": "2026-11-19T01:02:03.123456789Z"
