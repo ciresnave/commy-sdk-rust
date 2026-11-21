@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.20.0"
+version = "0.21.0"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 build = false
 autolib = false
@@ -68,7 +68,7 @@ name = "tenant_server_behavior_tests"
 path = "tests/tenant_server_behavior_tests.rs"
 
 [dependencies]
-commy-wire = "0.5"
+commy-wire = "0.6"
 dirty-ranges = "=0.1.2"
 page_size = "0.6"
 

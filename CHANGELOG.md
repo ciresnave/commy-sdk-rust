@@ -4,6 +4,15 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.21.0] - 2026-11-20 - Breaking
+
+### Changed (Breaking)
+
+- `commy-wire` 0.5 -> 0.6. Its types are part of this crate's API (`ClientMessage::Authenticate` holds a `commy_wire::Authenticate`), so a
+  consumer that names `commy_wire` must move to 0.6 too. 0.6 adds `Credentials::Mtls` (this crate has no mTLS credential yet; nothing here
+  builds one) and refuses an `Authenticate` that names two methods or carries a field its method does not define; the SDK's own credentials
+  each send one method with its own fields, so they are unaffected.
+
 ## [0.20.0] - 2026-11-19 - Breaking
 
 ### Changed (Breaking)

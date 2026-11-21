@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "commy-sdk-rust"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "axum",
  "commy-wire",
@@ -245,9 +245,9 @@ dependencies = [
 
 [[package]]
 name = "commy-wire"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef197a9c76d272ec63efcca68de5a618657be04011f8c1e5b5de49333347f8b6"
+checksum = "dd70ed8d135f756144570eb88d051c5f26b80c47d2654cf9e118d71652580814"
 dependencies = [
  "serde",
  "serde_json",
