@@ -95,9 +95,6 @@ features = ["derive"]
 [dependencies.serde_json]
 version = "1.0"
 
-[dependencies.tempfile]
-version = "3.8"
-
 [dependencies.thiserror]
 version = "2"
 
@@ -131,6 +128,9 @@ features = [
 
 [dev-dependencies.rcgen]
 version = "0.14"
+
+[dev-dependencies.tempfile]
+version = "3.8"
 
 [dev-dependencies.tokio-rustls]
 version = "0.26"
