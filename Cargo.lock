@@ -231,6 +231,7 @@ dependencies = [
  "rcgen",
  "rmp-serde",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "tempfile",

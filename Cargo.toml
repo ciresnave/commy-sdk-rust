@@ -108,6 +108,9 @@ features = ["full"]
 [dependencies.rustls]
 version = "0.23"
 
+[dependencies.rustls-native-certs]
+version = "0.8"
+
 [dependencies.tokio-tungstenite]
 version = "0.30"
 features = ["rustls-tls-native-roots"]

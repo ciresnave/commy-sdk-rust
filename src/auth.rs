@@ -42,6 +42,12 @@ pub fn api_key(key: String) -> AuthCredentials {
     AuthCredentials::ApiKey { key: key.into() }
 }
 
+/// Build client-certificate authentication: the identity is the certificate the connection presents
+/// (`Client::with_tls_client_identity`).
+pub fn mtls() -> AuthCredentials {
+    AuthCredentials::Mtls
+}
+
 /// Build JWT authentication
 pub fn jwt(token: String) -> AuthCredentials {
     AuthCredentials::Jwt {
