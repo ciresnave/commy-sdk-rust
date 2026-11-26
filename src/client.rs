@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Main Commy client for connecting to servers
 
+use crate::audit::AuditPage;
 use crate::auth::{AuthContext, AuthCredentials};
 use crate::connection::{Connection, ConnectionState};
 use crate::error::{CommyError, Result};
@@ -1288,6 +1289,33 @@ impl Client {
         }
     }
 
+    /// Read one page of the tenant's audit events (`ReadAudit`), oldest first, with `seq` greater
+    /// than `after`. Every entry is recomputed with `commy_wire::verify_audit_entry` for `tenant_id`
+    /// before it is returned; an entry that does not verify, or names a hash formula this library
+    /// does not know, fails the whole page rather than being skipped.
+    pub(crate) async fn read_audit(
+        &self,
+        tenant_id: &str,
+        after: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<AuditPage> {
+        let req = commy_wire::ReadAudit {
+            request_id: Uuid::new_v4().to_string(),
+            after,
+            limit,
+        };
+        req.validate()
+            .map_err(|e| CommyError::InvalidRequest(e.to_string()))?;
+        let id = req.request_id.clone();
+        match self
+            .grant_round_trip(ClientMessage::ReadAudit(req), &id)
+            .await?
+        {
+            ServerMessage::AuditEvents(a) => AuditPage::from_reply(a, tenant_id),
+            _ => unreachable!("grant_round_trip returns only the replies it waits for"),
+        }
+    }
+
     /// Open (`true`) or close (`false`) a service to local memory mapping. Closed by default: until
     /// an administrator opens it, [`Client::open_shared`] gets no path and stays on WSS ranges.
     /// Needs `service:admin` on the service. Closing stops future offers; existing mappings end at
@@ -1325,6 +1353,9 @@ impl Client {
                     return Ok(reply)
                 }
                 Ok(Ok(Some(reply @ ServerMessage::Grants(_)))) if matches!(&reply, ServerMessage::Grants(g) if g.request_id == request_id) => {
+                    return Ok(reply)
+                }
+                Ok(Ok(Some(reply @ ServerMessage::AuditEvents(_)))) if matches!(&reply, ServerMessage::AuditEvents(a) if a.request_id == request_id) => {
                     return Ok(reply)
                 }
                 Ok(Ok(Some(reply @ ServerMessage::LocalMappingAck(_)))) if matches!(&reply, ServerMessage::LocalMappingAck(a) if a.request_id == request_id) => {
@@ -3810,6 +3841,71 @@ mod grant_tests {
         let entries = res.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].permissions, ["service:read"]);
+    }
+
+    #[tokio::test]
+    async fn read_audit_sends_the_request_matches_its_reply_and_verifies() {
+        let (c, to, mut from) = client().await;
+        let fut = c.read_audit("acme", Some(4), Some(10));
+        let drive = async {
+            let ClientMessage::ReadAudit(r) = from.recv().await.unwrap() else {
+                panic!("expected ReadAudit");
+            };
+            assert_eq!((r.after, r.limit), (Some(4), Some(10)));
+            let entry = |seq: u64| commy_wire::AuditEntry {
+                seq,
+                ts_ms: 1,
+                line: "l".into(),
+                prev: String::new(),
+                hash: commy_wire::audit_hash_v2(seq, 1, "", Some("acme"), "l"),
+            };
+            // Another request's reply is not ours.
+            to.send(ServerMessage::AuditEvents(commy_wire::AuditEvents {
+                request_id: "other".into(),
+                entries: vec![],
+                head: None,
+                more: false,
+            }))
+            .unwrap();
+            to.send(ServerMessage::AuditEvents(commy_wire::AuditEvents {
+                request_id: r.request_id,
+                entries: vec![entry(5)],
+                head: None,
+                more: true,
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        let page = res.unwrap();
+        assert_eq!(page.entries.len(), 1);
+        assert!(page.more);
+    }
+
+    #[tokio::test]
+    async fn read_audit_refuses_limit_zero_before_sending_and_surfaces_server_errors() {
+        let (c, to, mut from) = client().await;
+        assert!(matches!(
+            c.read_audit("acme", None, Some(0)).await,
+            Err(CommyError::InvalidRequest(_))
+        ));
+        assert!(from.try_recv().is_err(), "nothing was sent");
+        let fut = c.read_audit("acme", None, None);
+        let drive = async {
+            let ClientMessage::ReadAudit(r) = from.recv().await.unwrap() else {
+                panic!("expected ReadAudit");
+            };
+            to.send(ServerMessage::Error {
+                code: crate::message::ErrorCode::PermissionDenied,
+                message: "no".into(),
+                request_id: Some(r.request_id),
+            })
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(
+            matches!(res, Err(CommyError::PermissionDenied(_))),
+            "{res:?}"
+        );
     }
 
     #[tokio::test]

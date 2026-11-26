@@ -4,6 +4,12 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [Unreleased]
+
+### Added
+
+- `Session::read_audit(after, limit)` (commy-wire `ReadAudit` / `AuditEvents`, server commy 0.28+): one page of the tenant's audit events, oldest first, needs `tenant:admin`. Every entry is recomputed with `commy_wire::verify_audit_entry` for the session's tenant; an entry that does not match, names an unknown hash formula, or has no hash fails the whole page (`CommyError::InvalidMessage`), never skipped. New `AuditPage { entries, head, more }`; `limit` 0 is refused before sending.
+
 ## [0.22.1] - 2026-11-27
 
 - mTLS end-to-end test against commy 0.29.0 (`tests/e2e.rs`, 16/16 per the lane), a CI job for it, and client and connection changes in `src/client.rs` and `src/connection.rs`. No public API item changed; not breaking.

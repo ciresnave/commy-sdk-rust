@@ -96,6 +96,7 @@
 //! ```
 //!
 
+pub mod audit;
 pub mod auth;
 pub mod client;
 pub mod connection;
@@ -108,6 +109,7 @@ pub mod session;
 pub mod shared_file;
 pub mod state;
 
+pub use audit::AuditPage;
 pub use client::Client;
 pub use connection::ClientIdentity;
 pub use error::{CommyError, Result};

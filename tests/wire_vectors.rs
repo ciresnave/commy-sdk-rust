@@ -13,16 +13,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Wire message types the SDK deliberately does not carry as such, with the reason.
-const NOT_CARRIED: &[(&str, &str)] = &[
-    (
-        "ReadAudit",
-        "commy-wire 0.5.1: a tenant administrator reads the audit log; the SDK has no audit call yet",
-    ),
-    (
-        "AuditEvents",
-        "the reply to ReadAudit (commy-wire 0.5.1); verify entries with commy_wire::verify_audit_entry when the call is added",
-    ),
-];
+const NOT_CARRIED: &[(&str, &str)] = &[];
 
 /// Invalid wire vectors the SDK accepts on purpose, with the reason. Shrink this.
 const TOLERATED_INVALID: &[(&str, &str)] = &[(
