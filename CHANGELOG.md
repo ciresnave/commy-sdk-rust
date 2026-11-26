@@ -4,7 +4,7 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
-## [Unreleased] - Breaking (the number is allocated at gate time)
+## [0.22.0] - 2026-11-26 - Breaking
 
 ### Added
 
