@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "commy-sdk-rust"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "axum",
  "commy-wire",
@@ -231,6 +231,7 @@ dependencies = [
  "rcgen",
  "rmp-serde",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "tempfile",

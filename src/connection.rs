@@ -52,24 +52,91 @@ fn decode_inbound(msg: Message) -> Option<ServerMessage> {
     }
 }
 
-/// A TLS client config that trusts only the certificates in `pem`.
-fn client_config(pem: &[u8]) -> Result<rustls::ClientConfig> {
-    use rustls::pki_types::{pem::PemObject, CertificateDer};
+/// A client certificate chain and its private key, both PEM: what a connection presents to a server
+/// that asks for client authentication (`AuthCredentials::Mtls`). The key is never shown by `Debug`.
+#[derive(Clone)]
+pub struct ClientIdentity {
+    cert_chain_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+}
+
+impl ClientIdentity {
+    /// An identity from the PEM certificate chain (leaf first) and the PEM private key.
+    pub fn new(cert_chain_pem: impl Into<Vec<u8>>, key_pem: impl Into<Vec<u8>>) -> Self {
+        Self {
+            cert_chain_pem: cert_chain_pem.into(),
+            key_pem: key_pem.into(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ClientIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientIdentity")
+            .field(
+                "cert_chain_pem",
+                &format_args!("{} bytes", self.cert_chain_pem.len()),
+            )
+            .field("key_pem", &"<redacted>")
+            .finish()
+    }
+}
+
+/// A TLS client config: it trusts only the certificates in `root_pem` (the system roots when
+/// `None`), and presents `identity` when one is given.
+fn client_config(
+    root_pem: Option<&[u8]>,
+    identity: Option<&ClientIdentity>,
+) -> Result<rustls::ClientConfig> {
+    use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
     let mut roots = rustls::RootCertStore::empty();
-    for cert in CertificateDer::pem_slice_iter(pem) {
-        let cert = cert.map_err(|e| CommyError::WebSocketError(format!("bad root PEM: {e}")))?;
-        roots
-            .add(cert)
-            .map_err(|e| CommyError::WebSocketError(format!("bad root certificate: {e}")))?;
+    match root_pem {
+        Some(pem) => {
+            for cert in CertificateDer::pem_slice_iter(pem) {
+                let cert =
+                    cert.map_err(|e| CommyError::WebSocketError(format!("bad root PEM: {e}")))?;
+                roots.add(cert).map_err(|e| {
+                    CommyError::WebSocketError(format!("bad root certificate: {e}"))
+                })?;
+            }
+            if roots.is_empty() {
+                return Err(CommyError::WebSocketError(
+                    "no certificate in the root PEM".to_string(),
+                ));
+            }
+        }
+        None => {
+            let native = rustls_native_certs::load_native_certs();
+            roots.add_parsable_certificates(native.certs);
+            if roots.is_empty() {
+                return Err(CommyError::WebSocketError(
+                    "no system root certificates found".to_string(),
+                ));
+            }
+        }
     }
-    if roots.is_empty() {
-        return Err(CommyError::WebSocketError(
-            "no certificate in the root PEM".to_string(),
-        ));
+    let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+    match identity {
+        None => Ok(builder.with_no_client_auth()),
+        Some(id) => {
+            let chain = CertificateDer::pem_slice_iter(&id.cert_chain_pem)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    CommyError::WebSocketError(format!("bad client certificate PEM: {e}"))
+                })?;
+            if chain.is_empty() {
+                return Err(CommyError::WebSocketError(
+                    "no certificate in the client identity PEM".to_string(),
+                ));
+            }
+            let key = PrivateKeyDer::from_pem_slice(&id.key_pem).map_err(|e| {
+                CommyError::WebSocketError(format!("bad client private key PEM: {e}"))
+            })?;
+            builder
+                .with_client_auth_cert(chain, key)
+                .map_err(|e| CommyError::WebSocketError(format!("bad client identity: {e}")))
+        }
     }
-    Ok(rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth())
 }
 
 /// Manages WebSocket connection
@@ -91,9 +158,23 @@ impl Connection {
     /// Create a new connection. With `root_pem`, trust exactly those certificates instead of the
     /// system roots (a self-signed development server).
     pub async fn new_with_roots(url: &str, root_pem: Option<&[u8]>) -> Result<Self> {
-        let connector = match root_pem {
-            Some(pem) => Some(Connector::Rustls(Arc::new(client_config(pem)?))),
-            None => None,
+        Self::new_with_tls(url, root_pem, None).await
+    }
+
+    /// Create a new connection that presents `identity` as its TLS client certificate (the
+    /// identity `AuthCredentials::Mtls` names), with the same `root_pem` rule as
+    /// [`Connection::new_with_roots`].
+    pub async fn new_with_tls(
+        url: &str,
+        root_pem: Option<&[u8]>,
+        identity: Option<&ClientIdentity>,
+    ) -> Result<Self> {
+        let connector = if root_pem.is_some() || identity.is_some() {
+            Some(Connector::Rustls(Arc::new(client_config(
+                root_pem, identity,
+            )?)))
+        } else {
+            None
         };
         let (ws_stream, _) = connect_async_tls_with_config(url, None, false, connector)
             .await
@@ -250,6 +331,133 @@ mod tests {
         let (url, _) = tls_server().await;
         let e = Connection::new_with_roots(&url, Some(b"not a pem")).await;
         assert!(matches!(e, Err(CommyError::WebSocketError(m)) if m.contains("no certificate")));
+    }
+
+    /// A loopback WSS server that REQUIRES a client certificate signed by its own CA. Returns the
+    /// URL, the server certificate PEM (the root the client must trust), the client identity, and a
+    /// channel that reports, per accepted handshake, the DER of the certificate the client
+    /// presented (`None`: the handshake was refused).
+    async fn mtls_server() -> (
+        String,
+        String,
+        ClientIdentity,
+        tokio::sync::mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+    ) {
+        use rustls::pki_types::{pem::PemObject, PrivateKeyDer};
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
+        let client_key = rcgen::KeyPair::generate().unwrap();
+        let client = rcgen::CertificateParams::new(vec!["client.test".to_string()])
+            .unwrap()
+            .signed_by(&client_key, &issuer)
+            .unwrap();
+        let server = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+
+        let mut client_roots = rustls::RootCertStore::empty();
+        client_roots.add(ca.der().clone()).unwrap();
+        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(client_roots))
+            .build()
+            .unwrap();
+        let key =
+            PrivateKeyDer::from_pem_slice(server.signing_key.serialize_pem().as_bytes()).unwrap();
+        let config = rustls::ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(vec![server.cert.der().clone()], key)
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (seen_tx, seen_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                let seen_tx = seen_tx.clone();
+                tokio::spawn(async move {
+                    match acceptor.accept(tcp).await {
+                        Ok(tls) => {
+                            let presented = tls
+                                .get_ref()
+                                .1
+                                .peer_certificates()
+                                .and_then(|c| c.first())
+                                .map(|c| c.as_ref().to_vec());
+                            let _ = seen_tx.send(presented);
+                            if let Ok(mut ws) = tokio_tungstenite::accept_async(tls).await {
+                                let _ = ws.next().await;
+                            }
+                        }
+                        Err(_) => {
+                            let _ = seen_tx.send(None);
+                        }
+                    }
+                });
+            }
+        });
+        let identity = ClientIdentity::new(client.pem(), client_key.serialize_pem());
+        (
+            format!("wss://127.0.0.1:{port}"),
+            server.cert.pem(),
+            identity,
+            seen_rx,
+        )
+    }
+
+    #[tokio::test]
+    async fn the_connection_presents_its_client_identity_and_a_server_that_requires_one_refuses_none(
+    ) {
+        use rustls::pki_types::{pem::PemObject, CertificateDer};
+        let (url, root, identity, mut seen) = mtls_server().await;
+
+        let conn = Connection::new_with_tls(&url, Some(root.as_bytes()), Some(&identity)).await;
+        assert!(
+            conn.is_ok(),
+            "an identity the server's CA signed is accepted"
+        );
+        let presented = seen
+            .recv()
+            .await
+            .unwrap()
+            .expect("the server saw a certificate");
+        let sent = CertificateDer::pem_slice_iter(&identity.cert_chain_pem)
+            .next()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            presented,
+            sent.as_ref(),
+            "the server saw exactly our certificate"
+        );
+
+        // No identity: the handshake is refused on the server side.
+        let _ = Connection::new_with_roots(&url, Some(root.as_bytes())).await;
+        assert_eq!(seen.recv().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_bad_client_identity_is_an_error_before_connecting() {
+        let (url, root, _, _) = mtls_server().await;
+        for id in [
+            ClientIdentity::new(&b"not a pem"[..], &b"not a pem"[..]),
+            ClientIdentity::new(Vec::new(), Vec::new()),
+        ] {
+            let e = Connection::new_with_tls(&url, Some(root.as_bytes()), Some(&id)).await;
+            assert!(
+                matches!(e, Err(CommyError::WebSocketError(_))),
+                "expected a WebSocketError, got ok={}",
+                e.is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn the_identitys_debug_never_shows_the_key() {
+        let id = ClientIdentity::new(&b"cert"[..], &b"PRIVATE-KEY-BYTES"[..]);
+        let shown = format!("{id:?}");
+        assert!(!shown.contains("PRIVATE-KEY-BYTES"), "{shown}");
+        assert!(shown.contains("redacted"));
     }
 
     #[test]

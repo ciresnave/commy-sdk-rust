@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.94"
 name = "commy-sdk-rust"
-version = "0.21.0"
+version = "0.22.0"
 authors = ["Eric Evans <ciresnave@gmail.com>"]
 build = false
 autolib = false
@@ -95,9 +95,6 @@ features = ["derive"]
 [dependencies.serde_json]
 version = "1.0"
 
-[dependencies.tempfile]
-version = "3.8"
-
 [dependencies.thiserror]
 version = "2"
 
@@ -107,6 +104,9 @@ features = ["full"]
 
 [dependencies.rustls]
 version = "0.23"
+
+[dependencies.rustls-native-certs]
+version = "0.8"
 
 [dependencies.tokio-tungstenite]
 version = "0.30"
@@ -128,6 +128,9 @@ features = [
 
 [dev-dependencies.rcgen]
 version = "0.14"
+
+[dev-dependencies.tempfile]
+version = "3.8"
 
 [dev-dependencies.tokio-rustls]
 version = "0.26"

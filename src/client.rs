@@ -111,6 +111,9 @@ pub struct Client {
     /// PEM certificates to trust instead of the system roots (self-signed development servers)
     tls_root_pem: Option<Vec<u8>>,
 
+    /// The TLS client certificate and key this client presents (`AuthCredentials::Mtls`)
+    tls_identity: Option<crate::connection::ClientIdentity>,
+
     /// Development servers: authenticate with exactly these scopes instead of administrator
     dev_scopes: Option<Vec<String>>,
 
@@ -159,6 +162,7 @@ impl Client {
             state: create_shared_state(client_id),
             max_reconnect_attempts: 5,
             tls_root_pem: None,
+            tls_identity: None,
             dev_scopes: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -170,6 +174,21 @@ impl Client {
     /// (a server with a self-signed certificate). Use it only for servers you control.
     pub fn with_tls_root_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
         self.tls_root_pem = Some(pem.into());
+        self
+    }
+
+    /// Present the PEM certificate chain (leaf first) and PEM private key as this client's TLS
+    /// client certificate when connecting. A server that asks for client authentication verifies
+    /// it, and `AuthCredentials::Mtls` names it as the login. Call it before connecting.
+    pub fn with_tls_client_identity(
+        mut self,
+        cert_chain_pem: impl Into<Vec<u8>>,
+        key_pem: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.tls_identity = Some(crate::connection::ClientIdentity::new(
+            cert_chain_pem,
+            key_pem,
+        ));
         self
     }
 
@@ -197,6 +216,7 @@ impl Client {
             state: create_shared_state(client_id),
             max_reconnect_attempts: 5,
             tls_root_pem: None,
+            tls_identity: None,
             dev_scopes: None,
             reconnect_attempts: Arc::new(AtomicU64::new(0)),
             shared: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -221,7 +241,13 @@ impl Client {
         state.connection_state = ConnectionState::Connecting;
         drop(state);
 
-        match Connection::new_with_roots(&self.server_url, self.tls_root_pem.as_deref()).await {
+        match Connection::new_with_tls(
+            &self.server_url,
+            self.tls_root_pem.as_deref(),
+            self.tls_identity.as_ref(),
+        )
+        .await
+        {
             Ok(conn) => {
                 let mut state = self.state.write().await;
                 state.connection_state = ConnectionState::Connected;
@@ -259,6 +285,12 @@ impl Client {
         tenant_id: &str,
         credentials: AuthCredentials,
     ) -> Result<AuthContext> {
+        if matches!(credentials, AuthCredentials::Mtls) && self.tls_identity.is_none() {
+            return Err(CommyError::InvalidRequest(
+                "Mtls credentials need a client certificate: call with_tls_client_identity before connecting"
+                    .to_string(),
+            ));
+        }
         let request = commy_wire::Authenticate {
             request_id: Uuid::new_v4().to_string(),
             protocol_version: commy_wire::PROTOCOL_VERSION,
@@ -1777,6 +1809,19 @@ mod tests {
     fn test_client_with_custom_id() {
         let client = Client::with_id("wss://localhost:9000", "my_client");
         assert_eq!(client.id(), "my_client");
+    }
+
+    #[tokio::test]
+    async fn mtls_login_without_a_client_identity_is_refused_before_sending() {
+        let client = Client::new("wss://127.0.0.1:1");
+        let e = client
+            ._authenticate_impl("acme", AuthCredentials::Mtls)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&e, CommyError::InvalidRequest(m) if m.contains("with_tls_client_identity")),
+            "{e:?}"
+        );
     }
 
     #[tokio::test]

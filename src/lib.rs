@@ -109,6 +109,7 @@ pub mod shared_file;
 pub mod state;
 
 pub use client::Client;
+pub use connection::ClientIdentity;
 pub use error::{CommyError, Result};
 pub use examples_support::{CommyServer, ServerConfig};
 pub use message::{ClientMessage, ServerMessage};

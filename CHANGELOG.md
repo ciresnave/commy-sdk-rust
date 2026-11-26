@@ -4,6 +4,19 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
+## [0.22.0] - 2026-11-26 - Breaking
+
+### Added
+
+- Client-certificate login (commy-wire 0.6 `Credentials::Mtls`). `AuthCredentials::Mtls` (and `auth::mtls()`) names the TLS client certificate
+  of the connection as the identity; `Client::with_tls_client_identity(cert_chain_pem, key_pem)` makes the connection present it
+  (`Connection::new_with_tls`, `ClientIdentity`; the key is never shown by `Debug`). Authenticating with `Mtls` on a client that has no identity
+  is refused before anything is sent (`InvalidRequest`). With no `with_tls_root_pem` the system roots are used, as before.
+
+### Changed (Breaking)
+
+- `AuthCredentials` gains the `Mtls` variant: an exhaustive `match` on it needs a new arm. `rustls-native-certs` 0.8 is now a direct dependency.
+
 ## [0.21.0] - 2026-11-20 - Breaking
 
 ### Changed (Breaking)

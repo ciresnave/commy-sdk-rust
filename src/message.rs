@@ -362,6 +362,11 @@ pub enum AuthCredentials {
     /// Custom authentication
     #[serde(rename = "custom")]
     Custom { data: Secret<serde_json::Value> },
+
+    /// The client certificate of the TLS connection is the identity (`Client::with_tls_client_identity`).
+    /// It carries no secret: the server reads the subject from the certificate it verified.
+    #[serde(rename = "mtls")]
+    Mtls,
 }
 
 /// Variable metadata
@@ -392,6 +397,7 @@ impl From<&AuthCredentials> for commy_wire::Credentials {
             AuthCredentials::Custom { data } => commy_wire::Credentials::Custom {
                 data: data.expose().clone(),
             },
+            AuthCredentials::Mtls => commy_wire::Credentials::Mtls,
         }
     }
 }
@@ -588,6 +594,31 @@ mod tests {
         };
         let json = serde_json::to_string(&custom).unwrap();
         assert!(json.contains("custom"));
+    }
+
+    /// `Mtls` is one method with no other field, on the wire and in the SDK's own JSON.
+    #[test]
+    fn mtls_credentials_send_one_method_and_no_secret_field() {
+        let wire: commy_wire::Credentials = (&AuthCredentials::Mtls).into();
+        assert_eq!(wire, commy_wire::Credentials::Mtls);
+        let msg = ClientMessage::Authenticate(commy_wire::Authenticate {
+            request_id: "r1".into(),
+            protocol_version: commy_wire::PROTOCOL_VERSION,
+            tenant_id: "acme".into(),
+            client_version: None,
+            client_id: None,
+            dev_scopes: None,
+            credentials: wire,
+        });
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["data"]["method"], "mtls");
+        for stray in ["key", "token", "username", "password", "data"] {
+            assert!(json["data"].get(stray).is_none(), "stray field {stray}");
+        }
+        let own = serde_json::to_value(AuthCredentials::Mtls).unwrap();
+        assert_eq!(own, serde_json::json!({"method": "mtls"}));
+        let back: AuthCredentials = serde_json::from_value(own).unwrap();
+        assert!(matches!(back, AuthCredentials::Mtls));
     }
 
     /// Audit finding 1: `{:?}` of credentials (or of an Authenticate message holding them)
