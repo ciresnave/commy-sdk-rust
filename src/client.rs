@@ -112,7 +112,7 @@ pub struct Client {
     tls_root_pem: Option<Vec<u8>>,
 
     /// The TLS client certificate and key this client presents (`AuthCredentials::Mtls`)
-    tls_identity: Option<crate::connection::ClientIdentity>,
+    tls_identity: Option<Arc<crate::connection::ClientIdentity>>,
 
     /// Development servers: authenticate with exactly these scopes instead of administrator
     dev_scopes: Option<Vec<String>>,
@@ -185,10 +185,10 @@ impl Client {
         cert_chain_pem: impl Into<Vec<u8>>,
         key_pem: impl Into<Vec<u8>>,
     ) -> Self {
-        self.tls_identity = Some(crate::connection::ClientIdentity::new(
+        self.tls_identity = Some(Arc::new(crate::connection::ClientIdentity::new(
             cert_chain_pem,
             key_pem,
-        ));
+        )));
         self
     }
 
@@ -244,7 +244,7 @@ impl Client {
         match Connection::new_with_tls(
             &self.server_url,
             self.tls_root_pem.as_deref(),
-            self.tls_identity.as_ref(),
+            self.tls_identity.as_deref(),
         )
         .await
         {

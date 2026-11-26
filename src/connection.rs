@@ -53,11 +53,12 @@ fn decode_inbound(msg: Message) -> Option<ServerMessage> {
 }
 
 /// A client certificate chain and its private key, both PEM: what a connection presents to a server
-/// that asks for client authentication (`AuthCredentials::Mtls`). The key is never shown by `Debug`.
-#[derive(Clone)]
+/// that asks for client authentication (`AuthCredentials::Mtls`). The key is never shown by `Debug`,
+/// is zeroed when the identity is dropped, and the type is not `Clone`, so no untracked copy of the
+/// key exists.
 pub struct ClientIdentity {
     cert_chain_pem: Vec<u8>,
-    key_pem: Vec<u8>,
+    key_pem: crate::message::Secret<zeroize::Zeroizing<Vec<u8>>>,
 }
 
 impl ClientIdentity {
@@ -65,7 +66,7 @@ impl ClientIdentity {
     pub fn new(cert_chain_pem: impl Into<Vec<u8>>, key_pem: impl Into<Vec<u8>>) -> Self {
         Self {
             cert_chain_pem: cert_chain_pem.into(),
-            key_pem: key_pem.into(),
+            key_pem: crate::message::Secret::new(zeroize::Zeroizing::new(key_pem.into())),
         }
     }
 }
@@ -129,7 +130,7 @@ fn client_config(
                     "no certificate in the client identity PEM".to_string(),
                 ));
             }
-            let key = PrivateKeyDer::from_pem_slice(&id.key_pem).map_err(|e| {
+            let key = PrivateKeyDer::from_pem_slice(id.key_pem.expose()).map_err(|e| {
                 CommyError::WebSocketError(format!("bad client private key PEM: {e}"))
             })?;
             builder
@@ -458,6 +459,22 @@ mod tests {
         let shown = format!("{id:?}");
         assert!(!shown.contains("PRIVATE-KEY-BYTES"), "{shown}");
         assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn the_identitys_key_is_zeroizing_secret_storage_and_not_clone() {
+        fn zeroizing(_: &crate::message::Secret<zeroize::Zeroizing<Vec<u8>>>) {}
+        let id = ClientIdentity::new(&b"cert"[..], &b"k"[..]);
+        zeroizing(&id.key_pem);
+        // Wiping zeroes the bytes in place; the drop does the same through `Zeroizing`.
+        let mut key = zeroize::Zeroizing::new(b"KEY".to_vec());
+        zeroize::Zeroize::zeroize(&mut *key);
+        assert!(key.is_empty());
+        // `ClientIdentity: !Clone`: if this became Clone both impls would apply and not compile.
+        trait AmbiguousIfClone<A> { fn probe() {} }
+        impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+        impl<T: Clone> AmbiguousIfClone<u8> for T {}
+        let _ = <ClientIdentity as AmbiguousIfClone<_>>::probe;
     }
 
     #[test]

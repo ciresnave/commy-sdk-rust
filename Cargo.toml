@@ -71,6 +71,7 @@ path = "tests/tenant_server_behavior_tests.rs"
 commy-wire = "0.6"
 dirty-ranges = "=0.1.2"
 page_size = "0.6"
+zeroize = "1.9"
 
 [dependencies.axum]
 version = "0.8"

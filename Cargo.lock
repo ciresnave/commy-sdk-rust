@@ -242,6 +242,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower-http",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
