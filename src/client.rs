@@ -179,7 +179,8 @@ impl Client {
 
     /// Present the PEM certificate chain (leaf first) and PEM private key as this client's TLS
     /// client certificate when connecting. A server that asks for client authentication verifies
-    /// it, and `AuthCredentials::Mtls` names it as the login. Call it before connecting.
+    /// it, and `AuthCredentials::Mtls` names it as the login. Call it before connecting: set after
+    /// `connect()`, the live connection never presents it (reconnects do).
     pub fn with_tls_client_identity(
         mut self,
         cert_chain_pem: impl Into<Vec<u8>>,

@@ -109,6 +109,13 @@ fn client_config(
         None => {
             let native = rustls_native_certs::load_native_certs();
             roots.add_parsable_certificates(native.certs);
+            if roots.is_empty() && !native.errors.is_empty() {
+                return Err(CommyError::WebSocketError(format!(
+                    "no system root certificates found ({} load errors, first: {})",
+                    native.errors.len(),
+                    native.errors[0]
+                )));
+            }
             if roots.is_empty() {
                 return Err(CommyError::WebSocketError(
                     "no system root certificates found".to_string(),
@@ -433,8 +440,19 @@ mod tests {
         );
 
         // No identity: the handshake is refused on the server side.
-        let _ = Connection::new_with_roots(&url, Some(root.as_bytes())).await;
+        assert!(Connection::new_with_roots(&url, Some(root.as_bytes())).await.is_err());
         assert_eq!(seen.recv().await.unwrap(), None);
+    }
+
+    #[test]
+    fn system_roots_with_a_bad_identity_name_the_identity_error() {
+        let bad = ClientIdentity::new(&b"not a pem"[..], &b"not a pem"[..]);
+        // Config construction only: a handshake on system roots is not constructible locally.
+        if let Err(e) = client_config(None, Some(&bad)) {
+            assert!(matches!(e, CommyError::WebSocketError(_)));
+        } else {
+            panic!("a bad identity must not build a config");
+        }
     }
 
     #[tokio::test]
