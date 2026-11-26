@@ -674,3 +674,134 @@ async fn a_member_that_never_drains_is_dropped_as_a_straggler_and_the_resize_goe
     a.shared_write(&svc, 12000, b"after").await.unwrap();
     a.flush_shared(&svc).await.unwrap();
 }
+
+// ---- mTLS (commy 0.29.0: a client certificate naming `commy://<tenant>/<client_id>` is the login) ----
+
+struct MtlsPki {
+    client_ca: rcgen::CertificateParams,
+    client_ca_key: rcgen::KeyPair,
+    client_ca_pem: String,
+}
+
+impl MtlsPki {
+    fn new() -> Self {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let key = rcgen::KeyPair::generate().unwrap();
+        let pem = params.self_signed(&key).unwrap().pem();
+        MtlsPki {
+            client_ca: params,
+            client_ca_key: key,
+            client_ca_pem: pem,
+        }
+    }
+
+    /// A client certificate with the single SAN URI `uri`, signed by the client CA: (cert, key) PEM.
+    fn identity(&self, uri: &str) -> (String, String) {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.subject_alt_names = vec![rcgen::SanType::URI(uri.try_into().unwrap())];
+        let key = rcgen::KeyPair::generate().unwrap();
+        let issuer = rcgen::Issuer::from_params(&self.client_ca, &self.client_ca_key);
+        let cert = params.signed_by(&key, &issuer).unwrap();
+        (cert.pem(), key.serialize_pem())
+    }
+}
+
+impl Server {
+    /// A server with development authentication OFF, client certificates optional (so the readiness
+    /// probe, which presents none, connects) and `mtls` accepted. The tenants exist as empty
+    /// `<tenant>.sqlite` files, which the server migrates on first use.
+    async fn start_mtls(pki: &MtlsPki, tenants: &[&str]) -> Self {
+        let bin = std::env::var("COMMY_BIN")
+            .expect("COMMY_BIN must name a built commy server binary for the e2e tests");
+        let dir = tempfile::tempdir().unwrap();
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string(), "localhost".into()])
+                .unwrap();
+        let cert_pem = cert.cert.pem();
+        std::fs::write(dir.path().join("cert.pem"), &cert_pem).unwrap();
+        std::fs::write(dir.path().join("key.pem"), cert.signing_key.serialize_pem()).unwrap();
+        std::fs::write(dir.path().join("clients.pem"), &pki.client_ca_pem).unwrap();
+        std::fs::create_dir(dir.path().join("auth")).unwrap();
+        for t in tenants {
+            std::fs::write(dir.path().join("auth").join(format!("{t}.sqlite")), b"").unwrap();
+        }
+        let path = |n: &str| dir.path().join(n).to_string_lossy().into_owned();
+        let extra_env: Vec<(String, String)> = vec![
+            ("COMMY_ALLOW_DEV_AUTH".into(), "0".into()),
+            (
+                "COMMY_AUTH_MASTER_SECRET".into(),
+                "0123456789abcdef0123456789abcdef-e2e".into(),
+            ),
+            ("COMMY_AUTH_DIR".into(), path("auth")),
+            ("COMMY_TLS_CLIENT_CA_PATH".into(), path("clients.pem")),
+            ("COMMY_TLS_CLIENT_AUTH".into(), "optional".into()),
+            ("COMMY_AUTH_METHODS".into(), "api_key,jwt,mtls".into()),
+        ];
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let child = spawn_server(&bin, dir.path(), port, &extra_env);
+        let mut server = Server {
+            child,
+            bin,
+            port,
+            extra_env,
+            _dir: dir,
+            url: format!("wss://127.0.0.1:{port}"),
+            cert_pem,
+        };
+        server.wait_ready().await;
+        server
+    }
+
+    fn mtls_client(&self, cert_pem: &str, key_pem: &str) -> Client {
+        self.client()
+            .with_tls_client_identity(cert_pem.as_bytes(), key_pem.as_bytes())
+    }
+}
+
+#[tokio::test]
+async fn a_client_certificate_naming_the_tenant_logs_in_and_holds_no_tenant_scope() {
+    let pki = MtlsPki::new();
+    let s = Server::start_mtls(&pki, &["acme", "globex"]).await;
+    let (cert, key) = pki.identity("commy://acme/robot-1");
+
+    let c = s.mtls_client(&cert, &key);
+    c.connect().await.expect("connect with the certificate");
+    let session = c
+        .authenticate("acme", auth::mtls())
+        .await
+        .unwrap_or_else(|e| panic!("mtls login: {e}\n{}", s.logs()));
+    assert_eq!(session.tenant_id(), "acme");
+    // The identity holds grants only, no `service:create` scope.
+    assert!(
+        session.create_service("svc", 4096).await.is_err(),
+        "an mtls identity has no tenant-level scope"
+    );
+    c.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_certificate_for_another_tenant_or_none_at_all_is_refused() {
+    let pki = MtlsPki::new();
+    let s = Server::start_mtls(&pki, &["acme", "globex"]).await;
+
+    // Certificate names globex, login asks for acme.
+    let (cert, key) = pki.identity("commy://globex/robot-1");
+    let c = s.mtls_client(&cert, &key);
+    c.connect().await.unwrap();
+    assert!(c.authenticate("acme", auth::mtls()).await.is_err());
+
+    // A certificate from a CA the server does not trust never completes the login.
+    let other = MtlsPki::new();
+    let (cert, key) = other.identity("commy://acme/robot-1");
+    let c = s.mtls_client(&cert, &key);
+    let refused = match c.connect().await {
+        Err(_) => true,
+        Ok(()) => c.authenticate("acme", auth::mtls()).await.is_err(),
+    };
+    assert!(refused, "an untrusted client certificate must not log in");
+}
