@@ -440,7 +440,9 @@ mod tests {
         );
 
         // No identity: the handshake is refused on the server side.
-        assert!(Connection::new_with_roots(&url, Some(root.as_bytes())).await.is_err());
+        assert!(Connection::new_with_roots(&url, Some(root.as_bytes()))
+            .await
+            .is_err());
         assert_eq!(seen.recv().await.unwrap(), None);
     }
 
@@ -489,7 +491,9 @@ mod tests {
         zeroize::Zeroize::zeroize(&mut *key);
         assert!(key.is_empty());
         // `ClientIdentity: !Clone`: if this became Clone both impls would apply and not compile.
-        trait AmbiguousIfClone<A> { fn probe() {} }
+        trait AmbiguousIfClone<A> {
+            fn probe() {}
+        }
         impl<T: ?Sized> AmbiguousIfClone<()> for T {}
         impl<T: Clone> AmbiguousIfClone<u8> for T {}
         let _ = <ClientIdentity as AmbiguousIfClone<_>>::probe;
