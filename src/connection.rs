@@ -53,11 +53,12 @@ fn decode_inbound(msg: Message) -> Option<ServerMessage> {
 }
 
 /// A client certificate chain and its private key, both PEM: what a connection presents to a server
-/// that asks for client authentication (`AuthCredentials::Mtls`). The key is never shown by `Debug`.
-#[derive(Clone)]
+/// that asks for client authentication (`AuthCredentials::Mtls`). The key is never shown by `Debug`,
+/// is zeroed when the identity is dropped, and the type is not `Clone`, so no untracked copy of the
+/// key exists.
 pub struct ClientIdentity {
     cert_chain_pem: Vec<u8>,
-    key_pem: Vec<u8>,
+    key_pem: crate::message::Secret<zeroize::Zeroizing<Vec<u8>>>,
 }
 
 impl ClientIdentity {
@@ -65,7 +66,7 @@ impl ClientIdentity {
     pub fn new(cert_chain_pem: impl Into<Vec<u8>>, key_pem: impl Into<Vec<u8>>) -> Self {
         Self {
             cert_chain_pem: cert_chain_pem.into(),
-            key_pem: key_pem.into(),
+            key_pem: crate::message::Secret::new(zeroize::Zeroizing::new(key_pem.into())),
         }
     }
 }
@@ -108,6 +109,21 @@ fn client_config(
         None => {
             let native = rustls_native_certs::load_native_certs();
             roots.add_parsable_certificates(native.certs);
+            if !roots.is_empty() && !native.errors.is_empty() {
+                eprintln!(
+                    "[Client] {} system root certificates failed to load (first: {}); continuing with {} usable roots",
+                    native.errors.len(),
+                    native.errors[0],
+                    roots.len()
+                );
+            }
+            if roots.is_empty() && !native.errors.is_empty() {
+                return Err(CommyError::WebSocketError(format!(
+                    "no system root certificates found ({} load errors, first: {})",
+                    native.errors.len(),
+                    native.errors[0]
+                )));
+            }
             if roots.is_empty() {
                 return Err(CommyError::WebSocketError(
                     "no system root certificates found".to_string(),
@@ -129,7 +145,7 @@ fn client_config(
                     "no certificate in the client identity PEM".to_string(),
                 ));
             }
-            let key = PrivateKeyDer::from_pem_slice(&id.key_pem).map_err(|e| {
+            let key = PrivateKeyDer::from_pem_slice(id.key_pem.expose()).map_err(|e| {
                 CommyError::WebSocketError(format!("bad client private key PEM: {e}"))
             })?;
             builder
@@ -432,8 +448,23 @@ mod tests {
         );
 
         // No identity: the handshake is refused on the server side.
-        let _ = Connection::new_with_roots(&url, Some(root.as_bytes())).await;
+        assert!(Connection::new_with_roots(&url, Some(root.as_bytes()))
+            .await
+            .is_err());
         assert_eq!(seen.recv().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_bad_identity_names_the_identity_error_not_the_roots() {
+        let (_, root, _, _) = mtls_server().await;
+        let bad = ClientIdentity::new(&b"not a pem"[..], &b"not a pem"[..]);
+        // Controlled roots, so only the identity can be at fault.
+        match client_config(Some(root.as_bytes()), Some(&bad)) {
+            Err(CommyError::WebSocketError(m)) => {
+                assert!(m.contains("identity"), "{m}")
+            }
+            other => panic!("expected the identity error, got ok={}", other.is_ok()),
+        }
     }
 
     #[tokio::test]
@@ -458,6 +489,24 @@ mod tests {
         let shown = format!("{id:?}");
         assert!(!shown.contains("PRIVATE-KEY-BYTES"), "{shown}");
         assert!(shown.contains("redacted"));
+    }
+
+    #[test]
+    fn the_identitys_key_is_zeroizing_secret_storage_and_not_clone() {
+        fn zeroizing(_: &crate::message::Secret<zeroize::Zeroizing<Vec<u8>>>) {}
+        let id = ClientIdentity::new(&b"cert"[..], &b"k"[..]);
+        zeroizing(&id.key_pem);
+        // Wiping zeroes the bytes in place; the drop does the same through `Zeroizing`.
+        let mut key = zeroize::Zeroizing::new(b"KEY".to_vec());
+        zeroize::Zeroize::zeroize(&mut *key);
+        assert!(key.is_empty());
+        // `ClientIdentity: !Clone`: if this became Clone both impls would apply and not compile.
+        trait AmbiguousIfClone<A> {
+            fn probe() {}
+        }
+        impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+        impl<T: Clone> AmbiguousIfClone<u8> for T {}
+        let _ = <ClientIdentity as AmbiguousIfClone<_>>::probe;
     }
 
     #[test]

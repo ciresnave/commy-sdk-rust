@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "commy-sdk-rust"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "axum",
  "commy-wire",
@@ -242,6 +242,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower-http",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
