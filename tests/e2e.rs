@@ -839,7 +839,10 @@ async fn a_tenant_admin_reads_its_own_verified_audit_log_and_others_cannot() {
     );
     assert!(!page.more);
     let seqs: Vec<u64> = page.entries.iter().map(|e| e.seq).collect();
-    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "oldest first: {seqs:?}");
+    assert!(
+        seqs.windows(2).all(|w| w[0] < w[1]),
+        "oldest first: {seqs:?}"
+    );
 
     // Paging: one entry at a time, then from after the first one.
     let first = admin.read_audit(None, Some(1)).await.unwrap();
