@@ -795,6 +795,17 @@ async fn a_certificate_for_another_tenant_or_none_at_all_is_refused() {
     c.connect().await.unwrap();
     assert!(c.authenticate("acme", auth::mtls()).await.is_err());
 
+    // No client identity at all: the mtls login cannot succeed.
+    let c = s.client();
+    let refused = match c.connect().await {
+        Err(_) => true,
+        Ok(()) => c.authenticate("acme", auth::mtls()).await.is_err(),
+    };
+    assert!(
+        refused,
+        "a login with no client certificate must not succeed"
+    );
+
     // A certificate from a CA the server does not trust never completes the login.
     let other = MtlsPki::new();
     let (cert, key) = other.identity("commy://acme/robot-1");
