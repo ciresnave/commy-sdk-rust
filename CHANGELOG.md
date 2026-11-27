@@ -6,7 +6,7 @@ version is one number for the whole project, and while it is below 1.0 the minor
 
 ## [0.22.1] - 2026-11-27
 
-- mTLS end-to-end test against commy 0.29.0 (`tests/e2e.rs`, 16/16 per the lane), a CI job for it, client and connection changes in `src/client.rs` and `src/connection.rs`, and a `zeroize` dependency. No public API item changed; not breaking.
+- mTLS end-to-end test against commy 0.29.0 (`tests/e2e.rs`, 16/16 per the lane), a CI job for it, and client and connection changes in `src/client.rs` and `src/connection.rs`. No public API item changed; not breaking.
 
 ## [0.22.0] - 2026-11-26 - Breaking
 
