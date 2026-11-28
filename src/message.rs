@@ -92,6 +92,9 @@ pub enum ClientMessage {
     /// List grants, optionally of one client and/or one service
     ListGrants(commy_wire::ListGrants),
 
+    /// Read the audit events of the caller's tenant (needs `tenant:admin`)
+    ReadAudit(commy_wire::ReadAudit),
+
     /// Open or close a service to local memory mapping (needs `service:admin`)
     SetLocalMapping(commy_wire::SetLocalMapping),
 
@@ -188,6 +191,9 @@ pub enum ServerMessage {
 
     /// The answer to `ListGrants`
     Grants(commy_wire::Grants),
+
+    /// The answer to `ReadAudit`
+    AuditEvents(commy_wire::AuditEvents),
 
     /// A `SetLocalMapping` took effect
     LocalMappingAck(commy_wire::LocalMappingAck),

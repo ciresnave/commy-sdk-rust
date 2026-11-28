@@ -816,3 +816,65 @@ async fn a_certificate_for_another_tenant_or_none_at_all_is_refused() {
     };
     assert!(refused, "an untrusted client certificate must not log in");
 }
+
+#[tokio::test]
+async fn a_tenant_admin_reads_its_own_verified_audit_log_and_others_cannot() {
+    let s = Server::start().await;
+    let admin = s.session("t_audit").await;
+    let svc = admin.create_service("svc", 4096).await.unwrap();
+    admin
+        .grant("bob", Some(&svc), &["service:read"])
+        .await
+        .unwrap();
+    admin.revoke("bob", Some(&svc), &[]).await.unwrap();
+
+    // Every entry was recomputed against its own hash before the page came back.
+    let page = admin
+        .read_audit(None, None)
+        .await
+        .unwrap_or_else(|e| panic!("read_audit: {e}\n{}", s.logs()));
+    assert!(
+        page.entries.len() >= 2,
+        "grant and revoke are audited for this tenant: {page:?}"
+    );
+    assert!(!page.more);
+    let seqs: Vec<u64> = page.entries.iter().map(|e| e.seq).collect();
+    assert!(
+        seqs.windows(2).all(|w| w[0] < w[1]),
+        "oldest first: {seqs:?}"
+    );
+
+    // Paging: one entry at a time, then from after the first one.
+    let first = admin.read_audit(None, Some(1)).await.unwrap();
+    assert_eq!(first.entries.len(), 1);
+    assert!(first.more);
+    assert_eq!(first.entries[0], page.entries[0]);
+    let rest = admin
+        .read_audit(Some(first.entries[0].seq), None)
+        .await
+        .unwrap();
+    assert_eq!(rest.entries, page.entries[1..]);
+
+    // Another tenant sees none of it.
+    let other = s.session("t_other").await;
+    let theirs = other.read_audit(None, None).await.unwrap();
+    assert!(
+        theirs.entries.iter().all(|e| page
+            .entries
+            .iter()
+            .all(|p| p.seq != e.seq && p.hash != e.hash)),
+        "a tenant never sees another tenant's events: {theirs:?}"
+    );
+
+    // A client holding no tenant scope is refused.
+    let c = s.client().with_dev_scopes(&[]);
+    c.connect().await.unwrap();
+    let nobody = c
+        .authenticate("t_audit", auth::api_key("dev".to_string()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        nobody.read_audit(None, None).await,
+        Err(commy_sdk_rust::CommyError::PermissionDenied(_))
+    ));
+}

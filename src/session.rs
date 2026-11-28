@@ -30,6 +30,7 @@
 //! # }
 //! ```
 
+use crate::audit::AuditPage;
 use crate::auth::AuthContext;
 use crate::client::{Client, RotationFill, RotationOutcome, SharedEvent};
 use crate::error::Result;
@@ -160,6 +161,17 @@ impl Session {
         service_id: Option<&str>,
     ) -> Result<Vec<commy_wire::GrantEntry>> {
         self.client.list_grants(client_id, service_id).await
+    }
+
+    /// Read one page of this tenant's audit log, oldest first, entries with `seq` greater than
+    /// `after` (`None`: from the start). `limit` defaults to 100 and is clamped to 1000 by the
+    /// server; `Some(0)` is refused. Needs `tenant:admin`. Each entry is verified against its own hash
+    /// for this tenant before the page is returned (see [`AuditPage`]). When `more` is true, ask
+    /// again with `after` set to the last entry's `seq`.
+    pub async fn read_audit(&self, after: Option<u64>, limit: Option<u32>) -> Result<AuditPage> {
+        self.client
+            .read_audit(&self.auth.tenant_id, after, limit)
+            .await
     }
 
     /// Open (`true`) or close (`false`) a service to local memory mapping. Closed by default: until
