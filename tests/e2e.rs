@@ -856,8 +856,19 @@ async fn a_tenant_admin_reads_its_own_verified_audit_log_and_others_cannot() {
     assert_eq!(rest.entries, page.entries[1..]);
 
     // Another tenant sees none of it.
+    // The other tenant does something auditable first, so the isolation check is not vacuous:
+    // it must see its own events and still none of `t_audit`'s.
     let other = s.session("t_other").await;
+    let osvc = other.create_service("osvc", 4096).await.unwrap();
+    other
+        .grant("carol", Some(&osvc), &["service:read"])
+        .await
+        .unwrap();
     let theirs = other.read_audit(None, None).await.unwrap();
+    assert!(
+        !theirs.entries.is_empty(),
+        "the other tenant's own grant is audited for it: {theirs:?}"
+    );
     assert!(
         theirs.entries.iter().all(|e| page
             .entries
