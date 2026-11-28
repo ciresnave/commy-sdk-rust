@@ -4,7 +4,9 @@ All notable changes to this crate. The format follows [Keep a Changelog](https:/
 version is one number for the whole project, and while it is below 1.0 the minor number is the breaking one.
 `ROADMAP.md` has the longer account of each item.
 
-## [Unreleased]
+## [0.23.0] - 2026-11-27 - Breaking
+
+**Breaking (allocated by pm-assist):** `ClientMessage` and `ServerMessage` are public enums without `#[non_exhaustive]` and gain `ReadAudit` / `AuditEvents` variants, so a downstream exhaustive `match` on either stops compiling: add an arm or a wildcard.
 
 ### Added
 
