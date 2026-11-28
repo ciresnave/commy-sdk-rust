@@ -1311,8 +1311,10 @@ impl Client {
             .grant_round_trip(ClientMessage::ReadAudit(req), &id)
             .await?
         {
-            ServerMessage::AuditEvents(a) => AuditPage::from_reply(a, tenant_id),
-            _ => unreachable!("grant_round_trip returns only the replies it waits for"),
+            ServerMessage::AuditEvents(a) => AuditPage::from_reply(a, tenant_id, after),
+            other => Err(CommyError::InvalidMessage(format!(
+                "the server answered ReadAudit with a different reply type: {other:?}"
+            ))),
         }
     }
 
@@ -3879,6 +3881,49 @@ mod grant_tests {
         let page = res.unwrap();
         assert_eq!(page.entries.len(), 1);
         assert!(page.more);
+    }
+
+    #[tokio::test]
+    async fn read_audit_refuses_a_tampered_entry_and_a_wrong_reply_type() {
+        let (c, to, mut from) = client().await;
+        let fut = c.read_audit("acme", None, None);
+        let drive = async {
+            let ClientMessage::ReadAudit(r) = from.recv().await.unwrap() else {
+                panic!("expected ReadAudit");
+            };
+            let mut e = commy_wire::AuditEntry {
+                seq: 5,
+                ts_ms: 1,
+                line: "l".into(),
+                prev: String::new(),
+                hash: commy_wire::audit_hash_v2(5, 1, "", Some("acme"), "l"),
+            };
+            e.line = "tampered".into();
+            to.send(ServerMessage::AuditEvents(commy_wire::AuditEvents {
+                request_id: r.request_id,
+                entries: vec![e],
+                head: None,
+                more: false,
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::InvalidMessage(_))), "{res:?}");
+
+        // The same request id answered with another reply type is an error, not a panic.
+        let fut = c.read_audit("acme", None, None);
+        let drive = async {
+            let ClientMessage::ReadAudit(r) = from.recv().await.unwrap() else {
+                panic!("expected ReadAudit");
+            };
+            to.send(ServerMessage::Grants(commy_wire::Grants {
+                request_id: r.request_id,
+                entries: vec![],
+            }))
+            .unwrap();
+        };
+        let (res, ()) = tokio::join!(fut, drive);
+        assert!(matches!(res, Err(CommyError::InvalidMessage(_))), "{res:?}");
     }
 
     #[tokio::test]

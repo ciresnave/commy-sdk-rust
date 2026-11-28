@@ -4,9 +4,15 @@
 use crate::error::{CommyError, Result};
 use commy_wire::{AuditEntry, AuditEvents, AuditHashError, AuditHead};
 
-/// One page of a tenant's audit events, every entry of which was recomputed with
-/// [`commy_wire::verify_audit_entry`] for that tenant. A match proves the entry was not edited; it
-/// does not prove the log was not cut short (record `head` somewhere the server cannot write).
+/// One page of a tenant's audit events. Every entry was recomputed with
+/// [`commy_wire::verify_audit_entry`] for that tenant, and the page's `seq` values are strictly
+/// ascending and past the requested `after`.
+///
+/// This is hash consistency, not proof against the server: an unkeyed hash can be recomputed by
+/// whoever edits an entry, a tenant's view is not a contiguous chain (so entries cannot be linked
+/// to one another or to `head`), and the log can be cut short. Record `head` somewhere the server
+/// cannot write to notice that. A v2 entry's hash is bound to the tenant it is verified for; a
+/// legacy v1 hash carries no tenant, so for those the tenant scoping is the server's word.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuditPage {
     /// The tenant's events, oldest first. `seq` values are not consecutive in a tenant's view.
@@ -19,9 +25,22 @@ pub struct AuditPage {
 
 impl AuditPage {
     /// Verify every entry of `reply` for `tenant_id` and build the page. One entry that does not
-    /// verify, names an unknown hash formula, or carries no hash fails the whole page.
-    pub(crate) fn from_reply(reply: AuditEvents, tenant_id: &str) -> Result<Self> {
+    /// verify, names an unknown hash formula, or carries no hash fails the whole page, as does a
+    /// `seq` that is not strictly ascending or not greater than `after`.
+    pub(crate) fn from_reply(
+        reply: AuditEvents,
+        tenant_id: &str,
+        after: Option<u64>,
+    ) -> Result<Self> {
+        let mut floor = after;
         for e in &reply.entries {
+            if floor.is_some_and(|f| e.seq <= f) {
+                return Err(CommyError::InvalidMessage(format!(
+                    "audit entry seq {} is out of order or not after the requested cursor",
+                    e.seq
+                )));
+            }
+            floor = Some(e.seq);
             commy_wire::verify_audit_entry(e, Some(tenant_id)).map_err(|why| {
                 CommyError::InvalidMessage(match why {
                     AuditHashError::Mismatch => {
@@ -84,7 +103,7 @@ mod tests {
             prev: a.hash.clone(),
             hash: audit_hash_v1(5, 7, &a.hash, "old"),
         };
-        let page = AuditPage::from_reply(reply(vec![a.clone(), b.clone()]), "acme").unwrap();
+        let page = AuditPage::from_reply(reply(vec![a.clone(), b.clone()]), "acme", None).unwrap();
         assert_eq!(page.entries, [a, b]);
         assert!(page.more);
         assert_eq!(page.head.unwrap().seq, 99);
@@ -94,8 +113,8 @@ mod tests {
     fn an_entry_verified_for_another_tenant_is_refused() {
         // Positive control: the same entry passes for its own tenant.
         let e = v2(3, "", "acme", "grant");
-        assert!(AuditPage::from_reply(reply(vec![e.clone()]), "acme").is_ok());
-        assert!(AuditPage::from_reply(reply(vec![e]), "globex").is_err());
+        assert!(AuditPage::from_reply(reply(vec![e.clone()]), "acme", None).is_ok());
+        assert!(AuditPage::from_reply(reply(vec![e]), "globex", None).is_err());
     }
 
     #[test]
@@ -103,7 +122,7 @@ mod tests {
         let good = v2(1, "", "acme", "one");
         let mut bad = v2(2, &good.hash, "acme", "two");
         bad.line = "tampered".into();
-        let err = AuditPage::from_reply(reply(vec![good, bad]), "acme").unwrap_err();
+        let err = AuditPage::from_reply(reply(vec![good, bad]), "acme", None).unwrap_err();
         assert!(
             matches!(&err, CommyError::InvalidMessage(m) if m.contains("seq 2")),
             "{err}"
@@ -114,7 +133,7 @@ mod tests {
     fn an_unknown_hash_prefix_is_refused_never_skipped() {
         let mut e = v2(1, "", "acme", "one");
         e.hash = format!("v3:{}", "a".repeat(64));
-        let err = AuditPage::from_reply(reply(vec![e]), "acme").unwrap_err();
+        let err = AuditPage::from_reply(reply(vec![e]), "acme", None).unwrap_err();
         assert!(
             matches!(&err, CommyError::InvalidMessage(m) if m.contains("unknown")),
             "{err}"
@@ -125,7 +144,26 @@ mod tests {
     fn an_entry_with_no_hash_is_refused() {
         let mut e = v2(1, "", "acme", "one");
         e.hash = String::new();
-        assert!(AuditPage::from_reply(reply(vec![e]), "acme").is_err());
+        assert!(AuditPage::from_reply(reply(vec![e]), "acme", None).is_err());
+    }
+
+    #[test]
+    fn duplicate_descending_or_stale_sequences_are_refused() {
+        let a = v2(3, "", "acme", "one");
+        let b = v2(4, &a.hash, "acme", "two");
+        // Positive control: ascending and past the cursor is accepted.
+        assert!(AuditPage::from_reply(reply(vec![a.clone(), b.clone()]), "acme", Some(2)).is_ok());
+        for (entries, after) in [
+            (vec![a.clone(), a.clone()], None),
+            (vec![b.clone(), a.clone()], None),
+            (vec![a.clone(), b.clone()], Some(3)),
+        ] {
+            let err = AuditPage::from_reply(reply(entries), "acme", after).unwrap_err();
+            assert!(
+                matches!(&err, CommyError::InvalidMessage(m) if m.contains("out of order")),
+                "{err}"
+            );
+        }
     }
 
     #[test]
@@ -138,6 +176,7 @@ mod tests {
                 more: false,
             },
             "acme",
+            None,
         )
         .unwrap();
         assert!(page.entries.is_empty() && page.head.is_none() && !page.more);

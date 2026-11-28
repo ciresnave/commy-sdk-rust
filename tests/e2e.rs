@@ -859,8 +859,11 @@ async fn a_tenant_admin_reads_its_own_verified_audit_log_and_others_cannot() {
     let other = s.session("t_other").await;
     let theirs = other.read_audit(None, None).await.unwrap();
     assert!(
-        theirs.entries.iter().all(|e| !page.entries.contains(e)),
-        "a tenant never sees another tenant's events"
+        theirs.entries.iter().all(|e| page
+            .entries
+            .iter()
+            .all(|p| p.seq != e.seq && p.hash != e.hash)),
+        "a tenant never sees another tenant's events: {theirs:?}"
     );
 
     // A client holding no tenant scope is refused.
